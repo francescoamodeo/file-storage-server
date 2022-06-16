@@ -3,6 +3,9 @@
 #define FILE_STORAGE_SERVER_STORAGE_H
 
 #include "../utils/util.h"
+#include "threadpool.h"
+
+#define PENDING_SIZE 20
 
 typedef struct confArgs {
     char *sktname;

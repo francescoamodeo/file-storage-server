@@ -4,7 +4,7 @@
 
 int main(int argc, char *argv[]){
 
-    atexit(cleanup);
+    CHECK_EQ_EXIT(atexit(cleanup), -1, "atexit")
     if(argc < 3){
         fprintf(stderr, "Usage: %s -f <configfile>\n", argv[0]);
         exit(EXIT_FAILURE);
@@ -16,16 +16,20 @@ int main(int argc, char *argv[]){
     while ((opt = getopt(argc, argv, ":f:")) != -1){
         switch (opt) {
             case 'f':
-                CHECK_EQ_EXIT(parsing config, (parse_config(optarg, &cargs)), -1, "parsing config", "")
+                CHECK_ERROR_EXIT((parse_config(optarg, &cargs)), -1)
                 break;
             case ':':
-                print_error("-f option requires an argument\n");
+                PRINT_ERROR("-f option requires an argument")
                 exit(EXIT_FAILURE);
-                break;
             default:
-                print_error("Unrecognised option\n");
+                PRINT_ERROR("Unrecognised option");
+                exit(EXIT_FAILURE);
         }
     }
+
+    //creazione threadpool
+    //threadpool_t *tpool = createThreadPool((int)cargs.nworkers, PENDING_SIZE);
+
 }
 
 void cleanup(){

@@ -51,46 +51,43 @@
 	return r;                               \
     }
 
-#define CHECK_EQ_EXIT(name, X, val, str, ...)	\
-    if ((X)==val) {				\
-        perror(#name);				\
-	int errno_copy = errno;			\
-	print_error(str, __VA_ARGS__);		\
-	exit(errno_copy);			\
+#define PRINT_PERROR(str)  \
+    {   \
+        fprintf(stderr,"ERROR: %s:%d: in function %s: ", __FILE__, __LINE__, __func__); \
+        perror(str);                   \
+        fflush(stderr); \
     }
 
-#define CHECK_NEQ_EXIT(name, X, val, str, ...)	\
-    if ((X)!=val) {				\
-        perror(#name);				\
-	int errno_copy = errno;			\
-	print_error(str, __VA_ARGS__);		\
-	exit(errno_copy);			\
+#define PRINT_ERROR(str)  \
+    {   \
+        fprintf(stderr,"ERROR: %s:%d: in function %s: %s\n", __FILE__, __LINE__, __func__, str); \
+        fflush(stderr); \
+    }
+
+#define CHECK_ERROR_EXIT(X, val)    \
+   if ((X)==val) {				    \
+	    int errno_copy = errno;     \
+        if(errno_copy == 0)         \
+            exit(EXIT_FAILURE);     \
+        else                        \
+            exit(errno_copy);       \
+    }
+
+#define CHECK_EQ_EXIT( X, val, str)	\
+    if ((X)==val) {				    \
+	    int errno_copy = errno;     \
+        if(errno_copy == 0) {       \
+            PRINT_ERROR(str)        \
+            exit(EXIT_FAILURE);     \
+        }                           \
+        else {                      \
+            PRINT_PERROR(str)       \
+            exit(errno_copy);       \
+        }                           \
     }
 
 // prototipo necessario solo se compiliamo con c99 o c11
 char *strndup(const char *s, size_t n);
-
-/**
- * \brief Procedura di utilita' per la stampa degli errori
- *
- */
-static inline void print_error(const char * str, ...) {
-    const char err[]="ERROR: ";
-    va_list argp;
-    char * p=(char *)malloc(strlen(str)+strlen(err)+EXTRA_LEN_PRINT_ERROR);
-    if (!p) {
-	perror("malloc");
-        fprintf(stderr,"FATAL ER1ROR nella funzione 'print_error'\n");
-        return;
-    }
-    strcpy(p,err);
-    strcpy(p+strlen(err), str);
-    va_start(argp, str);
-    vfprintf(stderr, p, argp);
-    va_end(argp);
-    free(p);
-}
-
 
 /** 
  * \brief Controlla se la stringa passata come primo argomento e' un numero.
