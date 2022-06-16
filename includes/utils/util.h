@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <pthread.h>
 #include <errno.h>
+#include <stdbool.h>
 
 #if !defined(BUFSIZE)
 #define BUFSIZE 256
@@ -22,7 +23,6 @@
 #endif
 
 #define MAX_FILE_NAME 128
-#define MAX_CONN 32
 #define MAX_ARGV 1024
 #define MAX_PATH (MAX_ARGV-MAX_FILE_NAME)
 
@@ -88,6 +88,27 @@
 
 // prototipo necessario solo se compiliamo con c99 o c11
 char *strndup(const char *s, size_t n);
+
+/**
+ * \brief Procedura di utilita' per la stampa degli errori
+ *
+ */
+static inline void print_error(const char * str, ...) {
+    const char err[]="ERROR: ";
+    va_list argp;
+    char * p=(char *)malloc(strlen(str)+strlen(err)+EXTRA_LEN_PRINT_ERROR);
+    if (!p) {
+        perror("malloc");
+        fprintf(stderr,"FATAL ERROR nella funzione 'print_error'\n");
+        return;
+    }
+    strcpy(p,err);
+    strcpy(p+strlen(err), str);
+    va_start(argp, str);
+    vfprintf(stderr, p, argp);
+    va_end(argp);
+    free(p);
+}
 
 /** 
  * \brief Controlla se la stringa passata come primo argomento e' un numero.

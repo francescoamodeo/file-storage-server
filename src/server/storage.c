@@ -38,13 +38,14 @@ int parse_configline(char* line, configArgs* cargs){
             PRINT_ERROR("Missing socket name argument")
             return -1;
         }
+        TRUNC_NEWLINE(tok)
         if (strlen(tok) >= MAX_PATH) {
             PRINT_ERROR("Socket name too long");
             return -1;
         }
         cargs->sktname = strndup(tok, strlen(tok));
         if(cargs->sktname == NULL){
-            PRINT_PERROR("strdup")
+            PRINT_PERROR("strndup")
             return -1;
         }
         return 0;

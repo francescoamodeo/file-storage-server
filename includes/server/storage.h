@@ -2,10 +2,7 @@
 #ifndef FILE_STORAGE_SERVER_STORAGE_H
 #define FILE_STORAGE_SERVER_STORAGE_H
 
-#include "../utils/util.h"
-#include "threadpool.h"
-
-#define PENDING_SIZE 20
+#include "util.h"
 
 typedef struct confArgs {
     char *sktname;
