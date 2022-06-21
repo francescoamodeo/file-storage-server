@@ -13,12 +13,12 @@
 #if !defined(BUFSIZE)
 #define BUFSIZE 256
 #endif
-#if !defined(SOCKNAME)
-#define SOCKNAME     "./cs_sock"
-#endif
 #if !defined(MAXBACKLOG)
 #define MAXBACKLOG   32
 #endif
+#define CONN_TIMEOUT_SEC 10
+#define RETRY_CONN_MSEC 3000
+#define MAX_CONSECUTIVE_REQUESTS 10
 
 /** Evita letture parziali
  *

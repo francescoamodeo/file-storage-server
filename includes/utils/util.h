@@ -13,6 +13,7 @@
 #include <pthread.h>
 #include <errno.h>
 #include <stdbool.h>
+#include <assert.h>
 
 #if !defined(BUFSIZE)
 #define BUFSIZE 256
@@ -139,10 +140,8 @@ static inline int isNumber(const char* s, long* n) {
 #define MALLOC(obj, size, type)   \
     {   \
         (obj) = malloc((size) * sizeof(type));  \
-        if ((obj) == NULL) {          \
-            fprintf(stderr, "LINE: %d FILE: %s --> ", __LINE__, __FILE__); \
-            perror("malloc");   \
-            fflush(stderr); \
+        if ((obj) == NULL) {        \
+            PRINT_PERROR("malloc") \
             exit(EXIT_FAILURE);   \
         }                         \
     }
@@ -152,9 +151,7 @@ static inline int isNumber(const char* s, long* n) {
     {   \
         (obj) = calloc(size, sizeof(type));   \
         if ((obj) == NULL) {    \
-            fprintf(stderr, "LINE: %d FILE: %s --> ", __LINE__, __FILE__); \
-            perror("calloc");   \
-            fflush(stderr); \
+            PRINT_PERROR("calloc")                    \
             exit(EXIT_FAILURE);   \
         }                         \
     }

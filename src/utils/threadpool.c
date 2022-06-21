@@ -171,6 +171,7 @@ int addToThreadPool(threadpool_t *pool, void (*f)(void *), void *arg) {
       UNLOCK_RETURN(&(pool->lock),-1);
       return 1; // esco con valore "coda piena"
     }
+
     
     if (pool->taskonthefly >= pool->numthreads) {
 	if (nopending) { 

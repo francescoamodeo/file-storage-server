@@ -2,10 +2,13 @@
 #include "storage.h"
 #include "conn.h"
 #include "threadpool.h"
-#include "message.h"
+#include "worker.h"
 #include "util.h"
+#include "protocol.h"
 
-#define PENDING_SIZE 20
+#define PENDING_SIZE 50
+
+response_t **clients;
 
 //ritorno l'inidce massimo dei descrittori attivi
 int updatemax(fd_set set, int fdmax){
@@ -49,7 +52,7 @@ int main(int argc, char *argv[]){
 
     //creazione socket
     unlink(cargs.sktname);
-    int unused;
+    __attribute__((unused)) int unused;
     int listenfd;
     SYSCALL_EXIT(socket, listenfd, socket(AF_UNIX, SOCK_STREAM, 0), "socket", "")
     struct sockaddr_un sa;
@@ -59,7 +62,9 @@ int main(int argc, char *argv[]){
     SYSCALL_EXIT(bind, unused, bind(listenfd, (struct sockaddr*)&sa, sizeof(sa)), "bind", "")
     SYSCALL_EXIT(listen, unused, listen(listenfd, MAXBACKLOG), "listen", "")
 
-    msg_t clients[MAXBACKLOG];
+    MALLOC(clients, MAXBACKLOG, response_t*)
+    for(int i = 0; i < MAXBACKLOG; i++)
+        MALLOC(clients[i], 1, response_t)
     int fd_max, fd;
     fd_set set, rset, wset;
     FD_ZERO(&set);
@@ -79,6 +84,7 @@ int main(int argc, char *argv[]){
         //tutti i fd che sono pronti per una operazione di i/o
         for (fd = 0; fd <= fd_max; fd++) {
 
+            int ret;
             //client fd pronto per un operazione di connessione/lettura
             if (FD_ISSET(fd, &rset)) {
                 //listen socket pronto per accettare una nuova connessione
@@ -90,17 +96,31 @@ int main(int argc, char *argv[]){
                     FD_SET(fd_client, &set); //aggiungo il fd al set generale
                     if (fd_client > fd_max) fd_max = fd_client;
                 } else {
+                    CHECK_EQ_EXIT((ret = addToThreadPool(tpool, (void*)requesthandler, (void*)&fd)), -1, "add threadpool")
+                    if(ret == 1) { //in questo caso il threadpool ha ritornato coda piena
+                        if (tpool->exiting) //se è > 0 il threadpool non accetta nuovi task
+                            FD_CLR(fd, &rset);
+                        continue;
+                    }
+                    //adesso che abbiamo letto la richiesta del client lo inseriamo nell'insieme dei fd pronti per
+                    //un'operazione di scrittura
+                    FD_SET(fd, &wset);
                 }
             }
 
                 //client fd pronto per un'operazione di scrittura
             else if (FD_ISSET(fd, &wset)) {
+                CHECK_EQ_EXIT(ret = addToThreadPool(tpool, (void*) requesthandler, (void*)&fd), -1, "add threadpool")
+                if(ret == 1) {
+                    if (tpool->exiting)
+                        FD_CLR(fd, &wset);
+                    continue;
+                }
+                FD_SET(fd, &rset);
             }
         }
     }
 }
-
-
 
 
 
