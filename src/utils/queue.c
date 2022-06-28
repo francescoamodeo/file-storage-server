@@ -52,6 +52,28 @@ int push(queue_t *queue, void* data) {
     return EXIT_SUCCESS;
 }
 
+/* Inserisce un dato in testa alla coda */
+int pushfirst(queue_t *queue, void* data) {
+    if (queue == NULL || data == NULL) {
+        errno = EINVAL;     // Invalid argument
+        return EXIT_FAILURE;
+    }
+    node_t *tmp = malloc(sizeof(node_t));
+    if (tmp == NULL)
+        return EXIT_FAILURE;
+    tmp->next = NULL;
+    tmp->data = data;
+    if (queue->head == NULL) {
+        queue->head = tmp;
+        queue->tail = tmp;
+    } else {
+        tmp->next = queue->head;
+        queue->head = tmp;
+    }
+    queue->length++;
+    return EXIT_SUCCESS;
+}
+
 
 /* Estrae un dato dalla cima della coda */
 void* pop(queue_t *queue) {
@@ -69,32 +91,4 @@ void* pop(queue_t *queue) {
     queue->length--;
     free(tmp);
     return data;
-}
-
-/* Estrae un dato da un punto qualsiasi della coda */
-int get(queue_t *queue, void* data) {
-    if (queue == NULL || queue->head == NULL) {
-        errno = EINVAL;
-        return EXIT_FAILURE;
-    }
-    node_t *curr = queue->head;
-    node_t *prev = NULL;
-    while (curr != NULL && curr->data != data) {
-        prev = curr;
-        curr = curr->next;
-    }
-    if (curr == NULL) {
-        errno = EINVAL;
-        return EXIT_FAILURE;
-    }
-    if (curr == queue->head)   // coda con un solo nodo
-        queue->head = queue->tail = NULL;
-    else if (curr->next == NULL) {  // sto facendo una pop sull'ultimo nodo
-        prev->next = NULL;
-        queue->tail = prev;
-    } else    // è un nodo interno
-        prev->next = curr->next;
-    free(curr);
-    queue->length--;
-    return EXIT_SUCCESS;
 }

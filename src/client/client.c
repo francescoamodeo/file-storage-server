@@ -12,12 +12,12 @@ typedef struct cmdlinerequest {
 } cmdrequest;
 
 char *sktname;
-bool verbose_mode = false;
-bool already_connected = false;
+bool optf_requested = false;
+bool opth_requested = false;
+bool optp_requested = false;
 bool optD_requested = false;
 bool optd_requested = false;
-size_t request_delay = 0;
-
+int request_delay = 0;
 
 void printcommands();
 void sendrequests(queue_t *requests);
@@ -49,11 +49,16 @@ int main(int argc, char* argv[]) {
                 printf("< Unrecognised option -%c\n", optopt);
                 exit(EXIT_FAILURE);
             case 'h':
+                if (opth_requested) {
+                    printf("< Option -%c already requested. Cannot repeat -%c option multiple times\n", opt, opt);
+                    exit(EXIT_FAILURE);
+                }
                 printcommands();
+                opth_requested = true;
                 exit(EXIT_SUCCESS);
             case 'f': {
-                if (already_connected) {
-                    printf("< Client already connected. Cannot repeat -f option multiple times\n");
+                if (optf_requested) {
+                    printf("< Client already connected. Cannot repeat -%c option multiple times\n", opt);
                     exit(EXIT_FAILURE);
                 }
                 size_t length;
@@ -65,8 +70,10 @@ int main(int argc, char* argv[]) {
                 MALLOC(request, 1, cmdrequest)
                 request->opt = opt;
                 request->arg = optarg;
-                push(requests, (void *) request);
+                //l'operzione di connessione ha la precedenza rispetto alle altre richieste in coda
+                pushfirst(requests, (void *) request);
                 requested++;
+                optf_requested = true;
                 break;
             }
             case 'w': {
@@ -261,7 +268,7 @@ int main(int argc, char* argv[]) {
                         else printf("< Invalid argument for -w option. %s must be a non negative number\n", tok);
                         exit(EXIT_FAILURE);
                     }
-                request_delay = n;
+                request_delay = (int)n;
                 break;
             }
             case 'l': {
@@ -298,10 +305,22 @@ int main(int argc, char* argv[]) {
                 break;
             }
             case 'p':
-                verbose_mode = true;
+                if (optp_requested) {
+                    printf("< Option -%c already requested. Cannot repeat -%c option multiple times\n", opt, opt);
+                    exit(EXIT_FAILURE);
+                }
+                optp_requested = true;
                 break;
+            default:
+                printf("< Unrecognised option -%c\n", optopt);
+                exit(EXIT_FAILURE);
         }
     }
+    if(!optf_requested) {
+        printf("< Option -f not included. Cannot send requests without connecting to the server\n");
+        exit(EXIT_FAILURE);
+    }
+
     if (requested == MAX_CONSECUTIVE_REQUESTS) {
         cmdrequest last = *(cmdrequest *) requests->tail->data;
         printf("< Maximum consecutive requests limit reached. Sending the first %d request in order, until -%c %s\n",
@@ -315,16 +334,15 @@ void sendrequests(queue_t *requests) {
     cmdrequest *request;
     int unused;
     char *tok, *tmpstr;
-    while ((request = (cmdrequest *) pop(requests))) { //TODO aggiungere gestione tempo tra una richiesta e l'altra
+    while ((request = (cmdrequest *) pop(requests))) {
         switch (request->opt) {
-            case 'f': { //TODO precedenza rispetto alle altre richieste
+            case 'f': {
                 CHECK_EQ_EXIT(sktname = strndup(request->arg, strlen(request->arg)), NULL, "strdup")
                 struct timespec abstime;
-                SYSCALL_EXIT(clock_gettime, unused, clock_gettime(CLOCK_REALTIME, &abstime), "clock_gettime", "")
+                time(&abstime.tv_sec);
                 abstime.tv_sec += CONN_TIMEOUT_SEC;
 
                 CHECK_EQ_EXIT(openConnection(sktname, RETRY_CONN_MSEC, abstime), -1, "openConnection")
-                already_connected = true;
                 break;
             }
             case 'w': {
@@ -365,6 +383,7 @@ void sendrequests(queue_t *requests) {
                     printf("%s", (char *) buf);
                 }
                 CHECK_EQ_EXIT(closeFile(abspath), -1, "closeFile")
+                break;
             }
             case 'R': {
                 char *nstr = strtok_r(request->arg, ",", &tmpstr);  //numero file da leggere
@@ -382,26 +401,31 @@ void sendrequests(queue_t *requests) {
                     CHECK_EQ_EXIT(realpath(storedir, abs_storedir), NULL, "realpath")
                     CHECK_EQ_EXIT(readNFiles(n, abs_storedir), -1, "readNFiles")
                 } else CHECK_EQ_EXIT(readNFiles(n, NULL), -1, "readNFiles")
+                break;
             }
             case 'l': {
                 char *file = strtok_r(request->arg, ",", &tmpstr);  //file da lockare
                 char abspath[PATH_MAX];
                 CHECK_EQ_EXIT(realpath(file, abspath), NULL, "realpath")
                 CHECK_EQ_EXIT(lockFile(abspath), -1, "lockFile")
+                break;
             }
             case 'u': {
                 char *file = strtok_r(request->arg, ",", &tmpstr);  //file da unlockare
                 char abspath[PATH_MAX];
                 CHECK_EQ_EXIT(realpath(file, abspath), NULL, "realpath")
                 CHECK_EQ_EXIT(unlockFile(abspath), -1, "unlockFile")
+                break;
             }
             case 'c': {
                 char *file = strtok_r(request->arg, ",", &tmpstr);  //file da cancellare
                 char abspath[PATH_MAX];
                 CHECK_EQ_EXIT(realpath(file, abspath), NULL, "realpath")
                 CHECK_EQ_EXIT(removeFile(abspath), -1, "removeFile")
+                break;
             }
         }
+        msleep(request_delay);
     }
 }
 
@@ -421,7 +445,7 @@ queue_t* lsR(const char nomedir[], queue_t *files, int n) {
     //controllo che sia una directory
     struct stat sb;
     int unused;
-    SYSCALL_EXIT(stat,unused,stat(nomedir,&sb),"stat","");
+    SYSCALL_EXIT(stat,unused,stat(nomedir,&sb),"stat","")
 
     DIR *dir;
     CHECK_EQ_EXIT(dir = opendir(nomedir), NULL, "opendir")

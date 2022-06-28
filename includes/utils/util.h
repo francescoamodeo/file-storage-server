@@ -129,6 +129,26 @@ static inline int isNumber(const char* s, long* n) {
   return 1;   // non e' un numero
 }
 
+/* msleep(): Sleep for the requested number of milliseconds. */
+int msleep(long msec) {
+    struct timespec ts;
+    int res;
+
+    if (msec < 0) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    ts.tv_sec = msec / 1000;
+    ts.tv_nsec = (msec % 1000) * 1000000;
+
+    do {
+        res = nanosleep(&ts, &ts);
+    } while (res && errno == EINTR);
+
+    return res;
+}
+
 #define TRUNC_NEWLINE(str) \
     {                      \
         size_t length = strlen(str);                   \

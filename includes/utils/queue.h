@@ -37,11 +37,22 @@ void delete_queue(queue_t *queue);
 
 /**
  * Inserisce un dato in fondo alla coda.
+ * @param queue puntatore alla coda
  * @param data puntatore al dato da inserire.
  * @return 0 in caso di successo.
  * @return 1 in caso di fallimento (setta errno).
  */
 int push(queue_t *queue, void* data);
+
+/**
+ * Inserisce un dato in testa alla coda.
+ * @param queue puntatore alla coda.
+ * @param data puntatore al dato da inserire.
+ * @return 0 in caso di successo.
+ * @return 1 in caso di fallimento (setta errno)
+ */
+int pushfirst(queue_t* queue, void* data);
+
 
 /**
  * Estrae un dato dalla cima della coda.
@@ -50,15 +61,6 @@ int push(queue_t *queue, void* data);
  * @return il dato estratto in caso di successo.
  */
 void* pop(queue_t *queue);
-
-/**
- * Estrae un dato da un qualsiasi punto della coda
- * @param queue puntatore alla coda
- * @param data il dato da rimuovere
- * @return 0 in caso di successo
- * @return 1 in caso di errore (setta errno)
- */
-int get(queue_t *queue, void* data);
 
 
 
