@@ -16,6 +16,7 @@ bool verbose_mode = false;
 bool already_connected = false;
 bool optD_requested = false;
 bool optd_requested = false;
+size_t request_delay = 0;
 
 
 void printcommands();
@@ -66,6 +67,7 @@ int main(int argc, char* argv[]) {
                 request->arg = optarg;
                 push(requests, (void *) request);
                 requested++;
+                break;
             }
             case 'w': {
                 //separo il nome della directory dal parametro n se presente
@@ -93,7 +95,7 @@ int main(int argc, char* argv[]) {
 
                 //controllo se è indicata l'opzione congiunta -D
                 optD_requested = false;
-                if(strcmp(argv[optind], "D") == 0){
+                if (strcmp(argv[optind], "D") == 0) {
                     int optD = getopt(1, argv, ":D:");
                     switch (optD) {
                         case ':':
@@ -117,31 +119,187 @@ int main(int argc, char* argv[]) {
                     request->opt = opt;
                     char *file = (char *) pop(files);
                     //se è stata specificata l'opzione -D concateno al nome del file da scrivere la directory di store
-                    if(optD_requested) {
-                        int arglen = (int)(strlen(file) + strlen(optarg) + 3);
+                    if (optD_requested) {
+                        int arglen = (int) (strlen(file) + strlen(optarg) + 3);
                         MALLOC(request->arg, arglen, char)
                         strncpy(request->arg, file, strlen(file));
                         strncat(request->arg, ",", 2);
                         strncat(request->arg, optarg, strlen(optarg));
-                    }
-                    else request->arg = strndup(file, strlen(file));
+                    } else request->arg = strndup(file, strlen(file));
                     push(requests, (void *) request);
                     requested++;
                 }
+                break;
             }
-            case 'W':
-                tok = strtok_r(optarg, ",", &tmpstr);
-                while((tok = strtok_r(NULL, ",", &tmpstr)) != NULL) //TODO
-
+            case 'W': {
+                //TODO controllo optarg
+                //controllo se è indicata l'opzione congiunta -D
+                char *filelist = optarg;
+                optD_requested = false;
+                if (strcmp(argv[optind], "D") == 0) {
+                    int optD = getopt(1, argv, ":D:");
+                    switch (optD) {
+                        case ':':
+                            printf("< -%c option requires an argument\n", optopt);
+                            exit(EXIT_FAILURE);
+                        case 'D':
+                            optD_requested = true;
+                            break;
+                        default:
+                            printf("< Unknown error\n");
+                            exit(EXIT_FAILURE);
+                    }
+                }
+                tok = strtok_r(filelist, ",", &tmpstr);
+                do {
+                    MALLOC(request, 1, cmdrequest)
+                    request->opt = 'w'; //tratto il caso W come se fosse w dopo l'esplorazione delle dir
+                    //se è stata specificata l'opzione -D concateno al nome del file da scrivere la directory di store
+                    if (optD_requested) {
+                        int arglen = (int) (strlen(tok) + strlen(optarg) + 3);
+                        MALLOC(request->arg, arglen, char)
+                        strncpy(request->arg, tok, strlen(tok));
+                        strncat(request->arg, ",", 2);
+                        strncat(request->arg, optarg, strlen(optarg));
+                    } else request->arg = strndup(tok, strlen(tok));
+                    push(requests, (void *) request);
+                    requested++;
+                } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
+                break;
+            }
             case 'D':
-            case 'r':
-            case 'R':
+                printf("< -D option requires to be used jointly with -w or -W options\n");
+                exit(EXIT_FAILURE);
+            case 'r': {
+                //TODO controllo optarg
+                //controllo se è indicata l'opzione congiunta -d
+                char *filelist = optarg;
+                optd_requested = false;
+                if (strcmp(argv[optind], "d") == 0) {
+                    int optd = getopt(1, argv, ":d:");
+                    switch (optd) {
+                        case ':':
+                            printf("< -%c option requires an argument\n", optopt);
+                            exit(EXIT_FAILURE);
+                        case 'd':
+                            optd_requested = true;
+                            break;
+                        default:
+                            printf("< Unknown error\n");
+                            exit(EXIT_FAILURE);
+                    }
+                }
+                tok = strtok_r(filelist, ",", &tmpstr);
+                do {
+                    MALLOC(request, 1, cmdrequest)
+                    request->opt = opt;
+                    //se è stata specificata l'opzione -D concateno al nome del file da scrivere la directory di store
+                    if (optd_requested) {
+                        int arglen = (int) (strlen(tok) + strlen(optarg) + 3);
+                        MALLOC(request->arg, arglen, char)
+                        strncpy(request->arg, tok, strlen(tok));
+                        strncat(request->arg, ",", 2);
+                        strncat(request->arg, optarg, strlen(optarg));
+                    } else request->arg = strndup(tok, strlen(tok));
+                    push(requests, (void *) request);
+                    requested++;
+                } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
+                break;
+            }
+            case 'R': {
+                long n = 0;
+                char *nstr = "\0";
+                if (optarg) { //parametro opzionale n presente
+                    if (isNumber(optarg, &n) != 0 || n < 0) {
+                        if (errno == ERANGE)
+                            printf("< Invalid argument for -w option. %s is out of range\n", tok);
+                        else printf("< Invalid argument for -w option. %s must be a non negative number\n", tok);
+                        exit(EXIT_FAILURE);
+                    }
+                    nstr = optarg;
+                }
+
+
+                optd_requested = false;
+                if (strcmp(argv[optind], "d") == 0) {
+                    int optd = getopt(1, argv, ":d:");
+                    switch (optd) {
+                        case ':':
+                            printf("< -%c option requires an argument\n", optopt);
+                            exit(EXIT_FAILURE);
+                        case 'd':
+                            optd_requested = true;
+                            break;
+                        default:
+                            printf("< Unknown error\n");
+                            exit(EXIT_FAILURE);
+                    }
+                }
+
+                MALLOC(request, 1, cmdrequest)
+                request->opt = opt;
+                if (optd_requested) {
+                    int arglen = (int) (strlen(nstr) + strlen(optarg) + 3);
+                    MALLOC(request->arg, arglen, char)
+                    strncpy(request->arg, nstr, strlen(nstr));
+                    strncat(request->arg, ",", 2);
+                    strncat(request->arg, optarg, strlen(optarg));
+                } else request->arg = nstr;
+                push(requests, (void *) request);
+                requested++;
+                break;
+            }
             case 'd':
-            case 't':
-            case 'l':
-            case 'u':
-            case 'c':
-            case 'p':;
+                printf("< -d option requires to be used jointly with -r or -R options\n");
+                exit(EXIT_FAILURE);
+            case 't':{
+                long n = 0;
+                if (optarg) //parametro opzionale n presente
+                    if (isNumber(optarg, &n) != 0 || n < 0) {
+                        if (errno == ERANGE)
+                            printf("< Invalid argument for -w option. %s is out of range\n", tok);
+                        else printf("< Invalid argument for -w option. %s must be a non negative number\n", tok);
+                        exit(EXIT_FAILURE);
+                    }
+                request_delay = n;
+                break;
+            }
+            case 'l': {
+                tok = strtok_r(optarg, ",", &tmpstr);
+                do {
+                    MALLOC(request, 1, cmdrequest)
+                    request->opt = opt;
+                    request->arg = strndup(tok, strlen(tok));
+                    push(requests, (void *) request);
+                    requested++;
+                } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
+                break;
+            }
+            case 'u': {
+                tok = strtok_r(optarg, ",", &tmpstr);
+                do {
+                    MALLOC(request, 1, cmdrequest)
+                    request->opt = opt;
+                    request->arg = strndup(tok, strlen(tok));
+                    push(requests, (void *) request);
+                    requested++;
+                } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
+                break;
+            }
+            case 'c': {
+                tok = strtok_r(optarg, ",", &tmpstr);
+                do {
+                    MALLOC(request, 1, cmdrequest)
+                    request->opt = opt;
+                    request->arg = strndup(tok, strlen(tok));
+                    push(requests, (void *) request);
+                    requested++;
+                } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
+                break;
+            }
+            case 'p':
+                verbose_mode = true;
+                break;
         }
     }
     if (requested == MAX_CONSECUTIVE_REQUESTS) {
@@ -157,7 +315,7 @@ void sendrequests(queue_t *requests) {
     cmdrequest *request;
     int unused;
     char *tok, *tmpstr;
-    while((request = (cmdrequest*)pop(requests))) { //TODO aggiungere gestione tempo tra una richiesta e l'altra
+    while ((request = (cmdrequest *) pop(requests))) { //TODO aggiungere gestione tempo tra una richiesta e l'altra
         switch (request->opt) {
             case 'f': { //TODO precedenza rispetto alle altre richieste
                 CHECK_EQ_EXIT(sktname = strndup(request->arg, strlen(request->arg)), NULL, "strdup")
@@ -172,15 +330,77 @@ void sendrequests(queue_t *requests) {
             case 'w': {
                 char *file = strtok_r(request->arg, ",", &tmpstr);  //file da scrivere
                 char *storedir = strtok_r(NULL, ",", &tmpstr); //directory D
-                CHECK_EQ_EXIT(openFile(file, O_CREATE | O_LOCK), -1, "openFile")
-                CHECK_EQ_EXIT(writeFile(file, storedir), -1, "writeFile")
+                char abspath[PATH_MAX];
+                CHECK_EQ_EXIT(realpath(file, abspath), NULL, "realpath")
+                CHECK_EQ_EXIT(openFile(abspath, O_CREATE | O_LOCK), -1, "openFile")
+                CHECK_EQ_EXIT(writeFile(abspath, storedir), -1, "writeFile")
+                CHECK_EQ_EXIT(closeFile(abspath), -1, "closeFile")
+                break;
             }
-            case 'W':
-            case 'r':
-            case 'R':
-            case 'l':
-            case 'u':
-            case 'c':;
+            case 'r': {
+                char *file = strtok_r(request->arg, ",", &tmpstr);  //file da leggere
+                char abspath[PATH_MAX];
+                void *buf;
+                size_t bufsize;
+                CHECK_EQ_EXIT(realpath(file, abspath), NULL, "realpath")
+                CHECK_EQ_EXIT(openFile(file, O_CREATE | O_LOCK), -1, "openFile")
+                CHECK_EQ_EXIT(readFile(abspath, &buf, &bufsize), -1, "writeFile")
+                char *storedir = strtok_r(NULL, ",", &tmpstr); //directory d
+                if (storedir) {
+                    //estraggo dal percorso assoluto il nome del file da salvare in storedir/
+                    char *tmpfilename;
+                    while ((file = strtok_r(abspath, "/", &tmpstr)) != NULL) {
+                        tmpfilename = file;
+                    }
+                    char abs_storedir[PATH_MAX];
+                    CHECK_EQ_EXIT(realpath(storedir, abs_storedir), NULL, "realpath")
+                    strncat(abs_storedir, "/", 2);
+                    strncat(abs_storedir, tmpfilename, strlen(tmpfilename));
+                    FILE *ptr = NULL;
+                    CHECK_EQ_EXIT((ptr = fopen(abs_storedir, "w+")), NULL, "fopen")
+                    CHECK_EQ_EXIT(fwrite(buf, bufsize, 1, ptr), -1, "fwrite")
+                    CHECK_EQ_EXIT(fclose(ptr), EOF, "fclose")
+                } else {
+                    //se non è stata indicata la directory di store stampo il file letto sullo stdout
+                    printf("%s", (char *) buf);
+                }
+                CHECK_EQ_EXIT(closeFile(abspath), -1, "closeFile")
+            }
+            case 'R': {
+                char *nstr = strtok_r(request->arg, ",", &tmpstr);  //numero file da leggere
+                long n = 0;
+                if (nstr) {
+                    char *e = NULL;
+                    errno = 0;
+                    n = strtol(nstr, &e, 10);
+                    assert(errno != ERANGE);    // overflow/underflow
+                    assert(e != NULL && *e == (char) 0);
+                }
+                char abs_storedir[PATH_MAX];
+                char *storedir = strtok_r(NULL, ",", &tmpstr); //directory d
+                if (storedir) { //directory d inclusa
+                    CHECK_EQ_EXIT(realpath(storedir, abs_storedir), NULL, "realpath")
+                    CHECK_EQ_EXIT(readNFiles(n, abs_storedir), -1, "readNFiles")
+                } else CHECK_EQ_EXIT(readNFiles(n, NULL), -1, "readNFiles")
+            }
+            case 'l': {
+                char *file = strtok_r(request->arg, ",", &tmpstr);  //file da lockare
+                char abspath[PATH_MAX];
+                CHECK_EQ_EXIT(realpath(file, abspath), NULL, "realpath")
+                CHECK_EQ_EXIT(lockFile(abspath), -1, "lockFile")
+            }
+            case 'u': {
+                char *file = strtok_r(request->arg, ",", &tmpstr);  //file da unlockare
+                char abspath[PATH_MAX];
+                CHECK_EQ_EXIT(realpath(file, abspath), NULL, "realpath")
+                CHECK_EQ_EXIT(unlockFile(abspath), -1, "unlockFile")
+            }
+            case 'c': {
+                char *file = strtok_r(request->arg, ",", &tmpstr);  //file da cancellare
+                char abspath[PATH_MAX];
+                CHECK_EQ_EXIT(realpath(file, abspath), NULL, "realpath")
+                CHECK_EQ_EXIT(removeFile(abspath), -1, "removeFile")
+            }
         }
     }
 }
@@ -209,7 +429,7 @@ queue_t* lsR(const char nomedir[], queue_t *files, int n) {
     struct dirent *file;
     while((errno=0, file =readdir(dir)) != NULL && n > 0) {
         struct stat statbuf;
-        char filename[MAX_PATH];
+        char filename[MAX_PATH]; //TODO PATH_MAX in limit.h
         int len1 = (int) strlen(nomedir);
         int len2 = (int) strlen(file->d_name);
         if ((len1 + len2 + 2) > MAX_PATH) {
