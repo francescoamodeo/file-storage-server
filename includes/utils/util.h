@@ -23,9 +23,10 @@
 #define EXTRA_LEN_PRINT_ERROR   512
 #endif
 
+
+#define UNIX_PATH_MAX 108
 #define MAX_FILE_NAME 128
-#define MAX_ARGV 1024
-#define MAX_PATH (MAX_ARGV-MAX_FILE_NAME)
+#define MAX_PATH 2048
 
 #define SYSCALL_EXIT(name, r, sc, str, ...)	\
     if ((r=sc) == -1) {				\

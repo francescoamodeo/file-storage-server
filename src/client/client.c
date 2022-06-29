@@ -62,9 +62,9 @@ int main(int argc, char* argv[]) {
                     exit(EXIT_FAILURE);
                 }
                 size_t length;
-                if ((length = strlen(optarg)) > MAX_FILE_NAME)
+                if ((length = strlen(optarg)) > UNIX_PATH_MAX)
                     printf("< Socket name length: %zu, exceeds maximum file name length: %d\n", length,
-                           MAX_FILE_NAME);
+                           UNIX_PATH_MAX);
 
                 //dopo aver controllato la richiesta la metto in coda
                 MALLOC(request, 1, cmdrequest)
@@ -259,7 +259,7 @@ int main(int argc, char* argv[]) {
             case 'd':
                 printf("< -d option requires to be used jointly with -r or -R options\n");
                 exit(EXIT_FAILURE);
-            case 't':{
+            case 't':{ //TODO check timer
                 long n = 0;
                 if (optarg) //parametro opzionale n presente
                     if (isNumber(optarg, &n) != 0 || n < 0) {
@@ -475,4 +475,9 @@ queue_t* lsR(const char nomedir[], queue_t *files, int n) {
     if (errno != 0) PRINT_PERROR("readdir")
     closedir(dir);
     return files;
+}
+
+void cleanup(){
+    //TODO frees
+    closeConnection(sktname);
 }

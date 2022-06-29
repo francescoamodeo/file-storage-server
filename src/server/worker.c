@@ -13,16 +13,7 @@ void requesthandler(int clientfd){
 }
 
 void read_request(int clientfd, request_t* r){
-    struct iovec request[3];
-    memset(request, 0, sizeof(request));
 
-    //TODO
-    request[0].iov_base = &r->request_code;
-    request[0].iov_len = sizeof(request_t);
-    request[1].iov_base = &r->request_length;
-    request[1].iov_len = sizeof(int);
-    request[2].iov_base = r->request_args;
-    request[2].iov_len = (size_t) request[1].iov_base;
 }
 
 void write_response(int clientfd){

@@ -13,10 +13,13 @@ typedef enum response_code {
 } response_c;
 
 
+//TODO allineamento
 typedef struct request_type {
     request_c request_code;
-    int request_length;
-    char* request_args;
+    char *filepath;
+    int flags;
+    int payload_size;
+    char* payload;
 } request_t;
 
 typedef struct response_type {

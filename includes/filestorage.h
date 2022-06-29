@@ -6,7 +6,8 @@
 
 #include <stddef.h>
 
-typedef enum file_flag {
+typedef enum open_flag {
+    O_NORMAL,
     O_CREATE,
     O_LOCK
 } flag ;
