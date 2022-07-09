@@ -9,7 +9,7 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <errno.h>
-#include <util.h>
+#include "util.h"
 #include "utils/threadpool.h"
 
 /**
@@ -34,10 +34,16 @@ static void *workerpool_thread(void *threadpool) {
     LOCK_RETURN(&(pool->lock), NULL);
     for (;;) {
 
+#if DEBUG
+        printf("sono un worker del tp che va a dormire\n");
+#endif
         // in attesa di un messaggio, controllo spurious wakeups.
         while((pool->count == 0) && (!pool->exiting)) {
             pthread_cond_wait(&(pool->cond), &(pool->lock));
-	}
+#if DEBUG
+            printf("mi hanno appena svegliato! pool->count: %d\n", pool->count);
+#endif
+        }
 
         if (pool->exiting > 1) break; // exit forzato, esco immediatamente
 	// devo uscire ma ci sono messaggi pendenti 
@@ -52,7 +58,9 @@ static void *workerpool_thread(void *threadpool) {
 
 	pool->taskonthefly++;
         UNLOCK_RETURN(&(pool->lock), NULL);
-
+#if DEBUG
+        printf("UN THREAD DEL POOL ESEGUE LA FUNZIONE con fd: %d\n", *(int*)task.arg);
+#endif
         // eseguo la funzione 
         (*(task.fun))(task.arg);
 	
@@ -181,10 +189,16 @@ int addToThreadPool(threadpool_t *pool, void (*f)(void *), void *arg) {
 	    UNLOCK_RETURN(&(pool->lock),-1);
 	    return 1;  // esco con valore "coda piena"
 	}
-    } 
-    
+    }
+
+#if DEBUG
+    printf("fd nella addtp: %d\n", *(int*)arg);
+#endif
     pool->pending_queue[pool->tail].fun = f;
     pool->pending_queue[pool->tail].arg = arg;
+#if DEBUG
+    printf("dopo aver inserito nella code del pool: fd = %d\n", *(int*)pool->pending_queue[pool->tail].arg);
+#endif
     pool->count++;    
     pool->tail++;
     if (pool->tail >= queue_size) pool->tail = 0;
