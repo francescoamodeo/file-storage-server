@@ -28,6 +28,7 @@ typedef struct storage_{
     icl_hash_t *files;
     list_t* filenames_queue;
     pthread_rwlock_t *mutex;
+    list_t *clients_awaiting;
 
     //Statistiche
     int max_files_number;
@@ -73,7 +74,7 @@ int fs_openFile(storage_t* storage, char* filename, int flags, int client);
  * @param bytes_read  numero di byte letti dal file
  * @return un intero che indica se l'operazione è stata completata con successo oppure il tipo di errore verficatosi
  */
-int fs_readFile(storage_t *storage, char *filename, int client, void *buf, long long int *bytes_read);
+int fs_readFile(storage_t *storage, char *filename, int client, void *buf, unsigned long *bytes_read);
 
 /**
  * @brief Legge N file qualsiasi dallo storage (che hanno un contenuto > 0), se N <= 0 vengono letti tutti quelli
@@ -151,7 +152,7 @@ int fs_closeFile(storage_t* storage, char* filename, int client);
  * @param deleted_bytes  bytes rimossi
  * @return un intero che indica se l'operazione è stata completata con successo oppure il tipo di errore verficatosi
  */
-int fs_removeFile(storage_t* storage, char* filename, int client, unsigned int* deleted_bytes);
+int fs_removeFile(storage_t* storage, char* filename, int client, unsigned long *deleted_bytes);
 
 /**
  * @brief Dealloca un file
@@ -160,8 +161,19 @@ int fs_removeFile(storage_t* storage, char* filename, int client, unsigned int* 
 void fs_filedestroy(file_t *file);
 
 /**
+ * @brief Crea un file
+ * @param filename      nome del file
+ * @param size          dimensione del file
+ * @param content       contenuto del file
+ * @param flags         flags che indicano come si vuole creare il file (O_CREATE deve essere obbligatoriamente indicato)
+ * @param client client che crea il file in modalità esclusiva (valore valido solo se è stato indicato il flag O_LOCK)
+ * @return un puntatore al file appena creato
+ */
+file_t *fs_filecreate(char *filename, unsigned int size, void *content, int flags, int client);
+
+/**
  * @brief Stampa le statistiche dello storage
- * @param storage
+ * @param storage storage di cui si vogliono stampare le statistiche
  */
 void fs_stats(storage_t *storage);
 
