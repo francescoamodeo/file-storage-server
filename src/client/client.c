@@ -20,6 +20,7 @@ bool optd_requested = false;
 int request_delay = 0;
 extern bool Verbose;
 extern bool already_connected;
+extern char *username;
 
 void printcommands(char** args);
 void sendrequests(queue_t *requests);
@@ -30,8 +31,8 @@ void cleanup();
 int main(int argc, char* argv[]) {
 
     CHECK_EQ_EXIT(atexit(cleanup), -1, "atexit")
-    if (argc < 3) {
-        fprintf(stderr, "Usage: %s -f <socketfile>\n", argv[0]);
+    if (argc < 5) {
+        fprintf(stderr, "Usage: %s -a <username> -f <socketfile>\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
@@ -39,23 +40,23 @@ int main(int argc, char* argv[]) {
     int opt;
     char *tmpstr;
     char *tok;
-    int requested = 0;
     cmdrequest *request;
-    while (requested < MAX_CONSECUTIVE_REQUESTS
-           && (opt = getopt(argc, argv, ":hf:w:W:Dr:dR::t::l:u:c:p")) != -1) {
+    while ((opt = getopt(argc, argv, ":ha:f:w:W:Dr:dR::t::l:u:c:p")) != -1) {
 #if DEBUG
         printf("optind generale: %d\n", optind);
         printf("opt: %c\n", opt);
         printf("optarg: %s\n", optarg);
 #endif
         switch (opt) {
-            case ':':
+            case ':': {
                 printf("< -%c option requires an argument\n", optopt);
                 exit(EXIT_FAILURE);
-            case '?':
+            }
+            case '?': {
                 printf("< Unrecognised option -%c\n", optopt);
                 exit(EXIT_FAILURE);
-            case 'h':
+            }
+            case 'h': {
                 if (opth_requested) {
                     printf("< Option -%c already requested. Cannot repeat -%c option multiple times\n", opt, opt);
                     exit(EXIT_FAILURE);
@@ -63,6 +64,19 @@ int main(int argc, char* argv[]) {
                 printcommands(argv);
                 opth_requested = true;
                 exit(EXIT_SUCCESS);
+            }
+            case 'a': {
+                if (username) {
+                    printf("< Username already assigned. Cannot repeat -%c option multiple times\n", opt);
+                    exit(EXIT_FAILURE);
+                }
+                size_t length;
+                if ((length = strlen(optarg)) > MAX_USERNAME)
+                    printf("< Username length: %zu, exceeds maximum username length: %d\n", length, MAX_USERNAME);
+
+                username = optarg;
+                break;
+            }
             case 'f': {
                 if (optf_requested) {
                     printf("< Client already connected. Cannot repeat -%c option multiple times\n", opt);
@@ -83,7 +97,7 @@ int main(int argc, char* argv[]) {
                 request->arg = optarg;
                 //l'operzione di connessione ha la precedenza rispetto alle altre richieste in coda
                 pushfirst(requests, (void *) request);
-                requested++;
+                
                 optf_requested = true;
                 break;
             }
@@ -131,22 +145,26 @@ int main(int argc, char* argv[]) {
                 //esploro ricorsivamente la dir per trovare tutti i file per cui dovrò richiedere una write
                 queue_t *files = init_queue();
                 files = lsR(dirname, files, (int) n);
+                size_t filecount = files->length;
                 //inserisco tutte le richieste effettive in coda che verranno gestite una ad una dalla sendrequest()
-                for (int i = 0; i < files->length; ++i) {
+                for (int i = 0; i < filecount; ++i) {
                     MALLOC(request, 1, cmdrequest)
                     request->opt = opt;
                     char *file = (char *) pop(files);
+                    #if DEBUG
+                    printf("file letto: %s\n", file);
+                    #endif
 
                     //se è stata specificata l'opzione -D concateno al nome del file da scrivere la directory di store
                     if (optD_requested) {
                         int arglen = (int) (strlen(file) + strlen(optarg) + 3);
                         MALLOC(request->arg, arglen, char)
-                        strncpy(request->arg, file, strlen(file));
+                        strncpy(request->arg, file, strlen(file)); //TODO sostituire strncpy con strndup
                         strncat(request->arg, ",", 2);
                         strncat(request->arg, optarg, strlen(optarg));
                     } else request->arg = strndup(file, strlen(file));
                     push(requests, (void *) request);
-                    requested++;
+                    
                 }
                 break;
             }
@@ -182,13 +200,14 @@ int main(int argc, char* argv[]) {
                         strncat(request->arg, optarg, strlen(optarg));
                     } else request->arg = strndup(tok, strlen(tok));
                     push(requests, (void *) request);
-                    requested++;
+                    
                 } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
                 break;
             }
-            case 'D':
+            case 'D': {
                 printf("< -D option requires to be used jointly with -w or -W options\n");
                 exit(EXIT_FAILURE);
+            }
             case 'r': {
                 //TODO controllo optarg
                 //controllo se è indicata l'opzione congiunta -d
@@ -221,7 +240,7 @@ int main(int argc, char* argv[]) {
                         strncat(request->arg, optarg, strlen(optarg));
                     } else request->arg = strndup(tok, strlen(tok));
                     push(requests, (void *) request);
-                    requested++;
+                    
                 } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
                 break;
             }
@@ -231,8 +250,8 @@ int main(int argc, char* argv[]) {
                 if (optarg) { //parametro opzionale n presente
                     if (isNumber(optarg, &n) != 0 || n < 0) {
                         if (errno == ERANGE)
-                            printf("< Invalid argument for -w option. %s is out of range\n", optarg);
-                        else printf("< Invalid argument for -w option. %s must be a non negative number\n", optarg);
+                            printf("< Invalid argument for -R option. %s is out of range\n", optarg);
+                        else printf("< Invalid argument for -R option. %s must be a non negative number\n", optarg);
                         exit(EXIT_FAILURE);
                     }
                     nstr = optarg;
@@ -258,26 +277,25 @@ int main(int argc, char* argv[]) {
                 MALLOC(request, 1, cmdrequest)
                 request->opt = opt;
                 if (optd_requested) {
-                    int arglen = (int) (strlen(nstr) + strlen(optarg) + 3);
-                    MALLOC(request->arg, arglen, char)
-                    strncpy(request->arg, nstr, strlen(nstr));
+                    request->arg = strndup(nstr, strlen(nstr));
                     strncat(request->arg, ",", 2);
                     strncat(request->arg, optarg, strlen(optarg));
                 } else request->arg = nstr;
                 push(requests, (void *) request);
-                requested++;
+                
                 break;
             }
-            case 'd':
+            case 'd': {
                 printf("< -d option requires to be used jointly with -r or -R options\n");
                 exit(EXIT_FAILURE);
+            }
             case 't':{ //TODO check timer
                 long n = 0;
                 if (optarg) //parametro opzionale time presente
                     if (isNumber(optarg, &n) != 0 || n < 0) {
                         if (errno == ERANGE)
-                            printf("< Invalid argument for -w option. %s is out of range\n", tok);
-                        else printf("< Invalid argument for -w option. %s must be a non negative number\n", tok);
+                            printf("< Invalid argument for -t option. %s is out of range\n", tok);
+                        else printf("< Invalid argument for -t option. %s must be a non negative number\n", tok);
                         exit(EXIT_FAILURE);
                     }
                 request_delay = (int)n;
@@ -290,7 +308,7 @@ int main(int argc, char* argv[]) {
                     request->opt = opt;
                     request->arg = strndup(tok, strlen(tok));
                     push(requests, (void *) request);
-                    requested++;
+                    
                 } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
                 break;
             }
@@ -301,7 +319,7 @@ int main(int argc, char* argv[]) {
                     request->opt = opt;
                     request->arg = strndup(tok, strlen(tok));
                     push(requests, (void *) request);
-                    requested++;
+                    
                 } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
                 break;
             }
@@ -312,7 +330,7 @@ int main(int argc, char* argv[]) {
                     request->opt = opt;
                     request->arg = strndup(tok, strlen(tok));
                     push(requests, (void *) request);
-                    requested++;
+                    
                 } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
                 break;
             }
@@ -327,19 +345,19 @@ int main(int argc, char* argv[]) {
 #endif
                 break;
             }
-            default:
+            default: {
                 printf("< Unrecognised option -%c\n", optopt);
                 exit(EXIT_FAILURE);
+            }
         }
     }
     if(!optf_requested) {
         printf("< Option -f not included. Cannot send requests without connecting to the server\n");
         exit(EXIT_FAILURE);
     }
-    if (requested > MAX_CONSECUTIVE_REQUESTS) {
-        cmdrequest last = *(cmdrequest *) requests->tail->data;
-        printf("< Maximum consecutive requests limit reached. Sending the first %d request in order, until -%c %s\n",
-               MAX_CONSECUTIVE_REQUESTS, last.opt, last.arg);
+    if(!username) {
+        printf("< Option -a not included. Cannot send requests without authenticate\n");
+        exit(EXIT_FAILURE);
     }
     sendrequests(requests);
 }
@@ -348,6 +366,9 @@ void sendrequests(queue_t *requests) {
     assert(requests != NULL);
     cmdrequest *request;
     char *tmpstr;
+#if DEBUG
+    printf("NUMERO RICHIESTE: %ld\n", requests->length);
+#endif
     while ((request = (cmdrequest *) pop(requests))) {
 #if DEBUG
         printf("request: %c\n", request->opt);
@@ -379,15 +400,24 @@ void sendrequests(queue_t *requests) {
                 void *buf;
                 size_t bufsize;
                 CHECK_EQ_EXIT(realpath(file, abspath), NULL, "realpath")
-                CHECK_EQ_EXIT(openFile(file, O_CREATE | O_LOCK), -1, "openFile")
-                CHECK_EQ_EXIT(readFile(abspath, &buf, &bufsize), -1, "writeFile")
+                CHECK_EQ_EXIT(openFile(abspath, O_NORMAL), -1, "openFile")
+                if (readFile(abspath, &buf, &bufsize) == -1){
+                    perror("errore readFile");
+                }
                 char *storedir = strtok_r(NULL, ",", &tmpstr); //directory d
+#if DEBUG
+                printf("storedir %s\n", storedir);
+#endif
                 if (storedir) {
-                    //estraggo dal percorso assoluto il nome del file da salvare in storedir/
+                    //estraggo dal path il nome del file da salvare in storedir/
                     char *tmpfilename;
-                    while ((file = strtok_r(abspath, "/", &tmpstr)) != NULL) {
-                        tmpfilename = file;
+                    char *tok;
+                    while ((tok = strtok_r(NULL, "/", &file)) != NULL) {
+                        tmpfilename = tok;
                     }
+#if DEBUG
+                    printf("il nome del file è %s\n", tmpfilename);
+#endif
                     char abs_storedir[PATH_MAX];
                     CHECK_EQ_EXIT(realpath(storedir, abs_storedir), NULL, "realpath")
                     strncat(abs_storedir, "/", 2);
@@ -396,9 +426,12 @@ void sendrequests(queue_t *requests) {
                     CHECK_EQ_EXIT((ptr = fopen(abs_storedir, "w+")), NULL, "fopen")
                     CHECK_EQ_EXIT(fwrite(buf, bufsize, 1, ptr), -1, "fwrite")
                     CHECK_EQ_EXIT(fclose(ptr), EOF, "fclose")
+#if DEBUG
+                    printf("file scritto nella directory locale\n");
+#endif
                 } else {
                     //se non è stata indicata la directory di store stampo il file letto sullo stdout
-                    printf("%s", (char *) buf);
+                    printf("file letto: %s\n", (char *) buf);
                 }
                 CHECK_EQ_EXIT(closeFile(abspath), -1, "closeFile")
                 break;
@@ -413,12 +446,11 @@ void sendrequests(queue_t *requests) {
                     assert(errno != ERANGE);    // overflow/underflow
                     assert(e != NULL && *e == (char) 0);
                 }
-                char abs_storedir[PATH_MAX];
+                printf("il numero di file da leggere è %ld\n", n);
+                int read = 0;
                 char *storedir = strtok_r(NULL, ",", &tmpstr); //directory d
-                if (storedir) { //directory d inclusa
-                    CHECK_EQ_EXIT(realpath(storedir, abs_storedir), NULL, "realpath")
-                    CHECK_EQ_EXIT(readNFiles(n, abs_storedir), -1, "readNFiles")
-                } else CHECK_EQ_EXIT(readNFiles(n, NULL), -1, "readNFiles")
+                CHECK_EQ_EXIT(read = readNFiles(n, storedir), -1, "readNFiles")
+                printf("ho letto %d files\n", read);
                 break;
             }
             case 'l': {
@@ -448,6 +480,7 @@ void sendrequests(queue_t *requests) {
 #if DEBUG
     printf("richieste esaurite\n");
 #endif
+    closeConnection(sktname);
 }
 
 int isdot(const char dir[]) {
@@ -474,7 +507,7 @@ queue_t* lsR(const char nomedir[], queue_t *files, int n) {
     struct dirent *file;
     while((errno=0, file =readdir(dir)) != NULL && n > 0) {
         struct stat statbuf;
-       char *filename; //TODO PATH_MAX in limit.h
+        char *filename; //TODO PATH_MAX in limit.h
         int len = ((int) strlen(nomedir) + (int) strlen(file->d_name))+10;
         if (len > MAX_PATH) {
             PRINT_ERROR("MAX_PATH troppo piccolo")
@@ -499,10 +532,11 @@ queue_t* lsR(const char nomedir[], queue_t *files, int n) {
     return files;
 }
 
+
 void printcommands(char **args){
     printf(
     "Usage: %s -f <socketfile> [OPTIONS]\n"
-    "-h                     Prints help message.\n"
+    "-h                     Prints help header.\n"
     "-f <sockefile>         Specifies the connections socket.\n"
     "-w <dirname>[,n=0]     Requests a write for all files inside dirname. If dirname contains other subdirectories,\n"
     "                       these are recursively visited and no more than n files are written.\n"
