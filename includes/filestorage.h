@@ -4,8 +4,6 @@
 #define FILE_STORAGE_SERVER_FILESTORAGE_H
 
 
-#include <stddef.h>
-
 typedef enum open_flag {
     O_NORMAL,
     O_CREATE,
@@ -34,5 +32,6 @@ int closeFile(const char* pathname);
 
 int removeFile(const char* pathname);
 
+int verbose(const char * restrict format, ...);
 
 #endif //FILE_STORAGE_SERVER_FILESTORAGE_H
