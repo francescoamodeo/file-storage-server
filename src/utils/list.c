@@ -25,22 +25,22 @@ void list_tostring(list_t* list){
         return;
     }
 
-    node_t *curr = list->head;
+    elem_t *curr = list->head;
     while (curr != NULL) {
         printf("%s\n", (char*)curr->data);
         curr = curr->next;
     }
 }
 
-node_t* list_add(list_t* list, void* data){
+elem_t* list_add(list_t* list, void* data){
 
     if(!list || !data) {
         errno = EINVAL;
         return NULL;
     }
 
-    node_t* new = NULL;
-    if((new = (node_t*)malloc(sizeof(node_t))) == NULL)
+    elem_t* new = NULL;
+    if((new = (elem_t*)malloc(sizeof(elem_t))) == NULL)
         return NULL;
     
     new->data = data;
@@ -60,15 +60,15 @@ node_t* list_add(list_t* list, void* data){
     return new;
 }
 
-node_t* list_addhead(list_t* list, void* data){
+elem_t* list_addhead(list_t* list, void* data){
 
     if(!list || !data) {
         errno = EINVAL;
         return NULL;
     }
 
-    node_t* new = NULL;
-    if((new = (node_t*)malloc(sizeof(node_t))) == NULL)
+    elem_t* new = NULL;
+    if((new = (elem_t*)malloc(sizeof(elem_t))) == NULL)
         return NULL;
     
     new->data = data;
@@ -88,7 +88,7 @@ node_t* list_addhead(list_t* list, void* data){
     return new;
 }
 
-node_t* list_gethead(list_t* list){
+elem_t* list_gethead(list_t* list){
 
     if(!list || list->length == 0) {
         errno = EINVAL;
@@ -97,14 +97,14 @@ node_t* list_gethead(list_t* list){
     return list->head;
 }
 
-node_t* list_removehead(list_t* list){
+elem_t* list_removehead(list_t* list){
 
     if(!list || list->head == NULL) {
         errno = EINVAL;
         return NULL;
     }
 
-    node_t *return_elem = list->head;
+    elem_t *return_elem = list->head;
     if (list->head == list->tail)
         list->head = list->tail = NULL;
     else {
@@ -115,7 +115,7 @@ node_t* list_removehead(list_t* list){
     return return_elem;
 }
 
-node_t* list_gettail(list_t* list){
+elem_t* list_gettail(list_t* list){
 
     if(!list || list->length == 0) {
         errno = EINVAL;
@@ -124,14 +124,14 @@ node_t* list_gettail(list_t* list){
     return list->tail;
 }
 
-node_t* list_removetail(list_t* list){
+elem_t* list_removetail(list_t* list){
 
     if(!list || list->length == 0) {
         errno = EINVAL;
         return NULL;
     }
 
-    node_t* return_elem = list->tail;
+    elem_t* return_elem = list->tail;
     if(list->head == list->tail)
         list->head = list->tail = NULL;
     else{
@@ -143,14 +143,14 @@ node_t* list_removetail(list_t* list){
     return return_elem;
 }
 
-node_t* list_get(list_t* list, void* compared, int (*compare_function)(void*, void*)) {
+elem_t* list_get(list_t* list, void* compared, int (*compare_function)(void*, void*)) {
 
     if (!list || !list->head) {
         errno = EINVAL;
         return NULL;
     }
 
-    node_t *curr = list->head;
+    elem_t *curr = list->head;
     while (curr != NULL) {
         //Se la compare_function è diversa da NULL uso quella, altrimenti uso uguaglianza semplice
         if (((compare_function != NULL) && (compare_function(curr->data, compared) == 0)) ||
@@ -164,15 +164,15 @@ node_t* list_get(list_t* list, void* compared, int (*compare_function)(void*, vo
     return NULL;
 }
 
-node_t* list_remove(list_t* list, void* compared, int (*compare_function)(void*, void*)) {
+elem_t* list_remove(list_t* list, void* compared, int (*compare_function)(void*, void*)) {
 
-    if (!list || !list->head) {
+    if (!list || !list->head || !compared) {
         errno = EINVAL;
         return NULL;
     }
 
-    node_t* return_elem = NULL;
-    node_t *curr = list->head;
+    elem_t* return_elem = NULL;
+    elem_t *curr = list->head;
     while (curr != NULL) {
         //Se la compare_function è diversa da NULL uso quella, altrimenti uso una normale uguaglianza
         if (((compare_function != NULL) && (compare_function(curr->data, compared) == 0)) ||
@@ -210,25 +210,33 @@ node_t* list_remove(list_t* list, void* compared, int (*compare_function)(void*,
     return NULL;
 }
 
-node_t* list_getnext(list_t* list, node_t* elem){
+elem_t* list_getnext(list_t* list, elem_t* elem){
     if(list == NULL || elem == NULL) {
         errno = EINVAL;
         return NULL;
     }
-    else return elem->next;
+    elem_t *curr = list->head;
+    while (curr != NULL){
+        if(curr == elem)
+            return elem->next;
+        curr = curr->next;
+    }
+
+    errno = EINVAL;
+    return NULL;
 }
 
-void list_destroy(list_t *list) {
+void list_destroy(list_t *list, void (*free_func)(void*)) {
     if(list == NULL) {
         errno = EINVAL;
         return;
     }
 
-    node_t *tmp;
+    elem_t *tmp;
     while(list->head != NULL){
         tmp = list->head;
         list->head = list->head->next;
-        free(tmp->data);
+        if(tmp->data) free_func(tmp->data);
         free(tmp);
     }
     free(list);
