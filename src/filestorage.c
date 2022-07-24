@@ -5,13 +5,13 @@
 #include "filestorage.h"
 #include "protocol.h"
 
-//TODO inserire tutte le stampe della verbose mode
-
 bool Verbose = false;
 bool already_connected = false;
 char *username;
 int socketfd = -1;
 char *socketname;
+
+int storeFile(const char *dirname, char *filename, void *data, size_t data_size);
 
 int openConnection(const char *sockname, int msec, const struct timespec abstime) {
 #if DEBUG
@@ -35,7 +35,7 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
         goto error;
     }
     if (strlen(sockname) >= UNIX_PATH_MAX) {
-           strcpy(errdesc, "with argument sockname");
+        strcpy(errdesc, "with argument sockname");
         errno = ENAMETOOLONG;
         goto error;
     }
@@ -44,12 +44,15 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
     memset(&sa, 0, sizeof(sa));
     strncpy(sa.sun_path, sockname, UNIX_PATH_MAX);
     sa.sun_family = AF_UNIX;
-    SYSCALL_EXIT(socket, socketfd, socket(AF_UNIX, SOCK_STREAM, 0), "client socket", "")
+    if ((socketfd = socket(AF_UNIX, SOCK_STREAM, 0)) == -1){
+        strcpy(errdesc, "creating socket");
+        goto error;
+    }
 
     time_t now;
     time(&now);
-    int connres = 0;
-    verbose("< Connecting to server...\n");
+    int connres;
+    verbose("< Connecting to server ...\n");
     while ((connres = connect(socketfd, (struct sockaddr *) &sa, sizeof(sa)) == -1)
            && now < abstime.tv_sec) {
         verbose("< Unable to connect to server. Retry in %d msec\n", msec);
@@ -58,14 +61,17 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
         time(&now);
     }
     if (connres != 0) {
-        strcpy(errdesc,"connecting to server\n");
+        strcpy(errdesc, "connecting to server\n");
         errno = ETIMEDOUT;
         goto error;
     }
     already_connected = true;
-    socketname = strndup(sockname, strlen(sockname));
+    if ((socketname = strndup(sockname, strlen(sockname))) == NULL){
+        strcpy(errdesc, "duplicating socketname");
+        goto error;
+    }
 
-    verbose("< %s (%s) completed with success: connection with server established\n", __func__, sockname);
+    verbose("< %s (%s) completed: connection with server established\n", __func__, sockname);
     return 0;
 
     error:
@@ -76,6 +82,8 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
 int closeConnection(const char *sockname) {
 
     char errdesc[STRERROR_LEN] = "";
+    msg_t *request = NULL;
+    msg_t *response = NULL;
 
     if (sockname == NULL || strcmp(sockname, socketname) != 0) {
         strcpy(errdesc, "with argument sockname");
@@ -87,26 +95,57 @@ int closeConnection(const char *sockname) {
         goto error;
     }
     if (strlen(sockname) >= UNIX_PATH_MAX) {
-           strcpy(errdesc, "with argument sockname");
+        strcpy(errdesc, "with argument sockname");
         errno = ENAMETOOLONG;
         goto error;
     }
 
-    //TODO send to server close request
-    __attribute__((unused)) int unused;
-    SYSCALL_EXIT(close, unused, close(socketfd), "close", "")
+    verbose("< Closing connection ...\n");
+    if ((request = buildmsg(username, FIN, -1, NULL, 0, NULL)) == NULL) {
+        strcpy(errdesc, "building the message to be send");
+        goto error;
+    }
+    if (writemsg(socketfd, request) <= 0) {
+        strcpy(errdesc, "writing the request to server");
+        goto error;
+    }
 
-    verbose("< %s (%s) completed with success: connection closed successfully\n", __func__, sockname);
+    if ((response = initmsg()) == NULL) {
+        strcpy(errdesc, "initialising the response to be received");
+        goto error;
+    }
+    if (readmsg(socketfd, response) <= 0) {
+        strcpy(errdesc, "reading the response from server");
+        goto error;
+    }
+    if (response->header->code != EXIT_SUCCESS) {
+        errno = response->header->code;
+        goto error;
+    }
+
+    if (close(socketfd) == -1) {
+        strcpy(errdesc, "closing socket");
+        goto error;
+    }
+    already_connected = false;
+
+    verbose("< %s (%s) completed: connection closed successfully\n", __func__, sockname);
+    destroymsg(request);
+    destroymsg(response);
     return 0;
 
     error:
     verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, sockname, errdesc, strerror(errno));
+    if (request) destroymsg(request);
+    if (response) destroymsg(response);
     return -1;
 }
 
 int openFile(const char *pathname, int flags) {
 
     char errdesc[STRERROR_LEN] = "";
+    msg_t *request = NULL;
+    msg_t *response = NULL;
 
     if (already_connected == false) {
         errno = ENOTCONN;
@@ -118,7 +157,7 @@ int openFile(const char *pathname, int flags) {
         goto error;
     }
     if (strlen(pathname) > MAX_PATH) {
-           strcpy(errdesc, "with argument pathname");
+        strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
     }
@@ -132,7 +171,6 @@ int openFile(const char *pathname, int flags) {
     printf("pathname: %s\n", pathname);
 #endif
 
-    msg_t *request;
     if ((request = buildmsg(username, OPEN, flags, pathname, 0, NULL)) == NULL) {
         strcpy(errdesc, "building the message to be send");
         goto error;
@@ -152,7 +190,6 @@ int openFile(const char *pathname, int flags) {
 #endif
 
 
-    msg_t *response;
     if ((response = initmsg()) == NULL) {
         strcpy(errdesc, "initialising the response to be received");
         goto error;
@@ -166,17 +203,24 @@ int openFile(const char *pathname, int flags) {
         goto error;
     }
 
-    verbose("< %s (%s) completed with success\n", __func__, pathname);
+    verbose("< %s (%s) completed\n", __func__, pathname);
+    destroymsg(request);
+    destroymsg(response);
     return 0;
 
     error:
     verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    if (request) destroymsg(request);
+    if (response) destroymsg(response);
     return -1;
 }
 
 int readFile(const char *pathname, void **buf, size_t *size) {
 
     char errdesc[STRERROR_LEN] = "";
+    msg_t *request = NULL;
+    msg_t *response = NULL;
+    *buf = NULL;
 
     if (already_connected == false) {
         errno = ENOTCONN;
@@ -188,12 +232,12 @@ int readFile(const char *pathname, void **buf, size_t *size) {
         goto error;
     }
     if (strlen(pathname) > MAX_PATH) {
-           strcpy(errdesc, "with argument pathname");
+        strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
     }
 
-    msg_t *request;
+
     if ((request = buildmsg(username, READ, -1, pathname, 0, NULL)) == NULL) {
         strcpy(errdesc, "building the message to be send");
         goto error;
@@ -203,7 +247,6 @@ int readFile(const char *pathname, void **buf, size_t *size) {
         goto error;
     }
 
-    msg_t *response;
     if ((response = initmsg()) == NULL) {
         strcpy(errdesc, "initialising the response to be received");
         goto error;
@@ -213,46 +256,47 @@ int readFile(const char *pathname, void **buf, size_t *size) {
         goto error;
     }
 
-
     if (response->header->code != EXIT_SUCCESS) {
         errno = response->header->code;
         goto error;
     }
 
     *buf = malloc(response->header->data_size);
+    if (*buf == NULL) {
+        strcpy(errdesc, "allocating the buffer");
+        goto error;
+    }
     memcpy(*buf, response->data, response->header->data_size);
     *size = response->header->data_size;
 
+    verbose("< %s (%s) completed: read %d bytes\n", __func__, pathname, response->header->data_size);
     destroymsg(request);
     destroymsg(response);
-    verbose("< %s (%s) completed with success: read %d bytes\n", __func__, pathname, response->header->data_size);
     return 0;
 
     error:
     verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    if (*buf) free(*buf);
+    if (request) destroymsg(request);
+    if (response) destroymsg(response);
     return -1;
-
-    /*
-    char *opstr = itostr(READ);
-    char *packet = strnconcat(opstr, "|", pathname, NULL);
-    printf("%s\n", packet);
-    int packetsize = (int) strlen(packet);
-
-    CHECK_EQ_EXIT(writen(socketfd, &packetsize, sizeof(int)), -1, "writen")
-    CHECK_EQ_EXIT(writen(socketfd, packet, packetsize), -1, "writen")
-     */
 }
 
 int readNFiles(int N, const char *dirname) {
 
     char errdesc[STRERROR_LEN] = "";
+    msg_t *request = NULL;
+    msg_t *response = NULL;
+    size_t bytes_stored = 0;
+    int files_stored = 0;
+    int files_recv = 0;
 
     if (already_connected == false) {
         errno = ENOTCONN;
         goto error;
     }
     if (dirname && strlen(dirname) > MAX_PATH) {
-           strcpy(errdesc, "with argument dirname");
+        strcpy(errdesc, "with argument dirname");
         errno = ENAMETOOLONG;
         goto error;
     }
@@ -261,7 +305,6 @@ int readNFiles(int N, const char *dirname) {
     printf("buildo request\n");
 #endif
     if (N <= 0) N = 0;
-    msg_t *request;
     if ((request = buildmsg(username, READN, N, NULL, 0, NULL)) == NULL) {
         strcpy(errdesc, "building the message to be send");
         goto error;
@@ -271,57 +314,8 @@ int readNFiles(int N, const char *dirname) {
         goto error;
     }
 
-    msg_t *response;
-    if ((response = initmsg()) == NULL) {
-        strcpy(errdesc, "initialising the response to be received");
-        goto error;
-    }
-    if (readmsg(socketfd, response) <= 0) {
-        strcpy(errdesc, "reading the response from server");
-        goto error;
-    }
-
-
-    if (response->header->arg <= 0) {
-        destroymsg(request);
-        destroymsg(response);
-        //TODO
-        return 0;;
-    }
-
-    int bytesread = 0;
-    int filesread = 0;
-    while (true) {
-        if (dirname) {
-            char abs_storedir[MAX_PATH];
-            CHECK_EQ_EXIT(realpath(dirname, abs_storedir), NULL, "realpath")
-
-            //estraggo dal path il nome del file da salvare in storedir/
-            char *tmpfilename;
-            char *path = strndup(response->header->pathname, strlen(response->header->pathname));
-            char *tok;
-            while ((tok = strtok_r(NULL, "/", &path)) != NULL) {
-                tmpfilename = tok;
-            }
-#if DEBUG
-            printf("il nome del file è %s\n", tmpfilename);
-#endif
-            strncat(abs_storedir, "/", 2);
-            strncat(abs_storedir, tmpfilename, strlen(tmpfilename));
-            FILE *ptr = NULL;
-            CHECK_EQ_EXIT((ptr = fopen(abs_storedir, "w+")), NULL, "fopen")
-            CHECK_EQ_EXIT(fwrite(response->data, response->header->data_size, 1, ptr), -1, "fwrite")
-            CHECK_EQ_EXIT(fclose(ptr), EOF, "fclose")
-
-        } else printf("file letto (READN): %s\n", (char *) response->data);
-
-        filesread++;
-        if (filesread == response->header->arg) {
-            destroymsg(response);
-            break;
-        }
-
-        destroymsg(response);
+    do {
+        if (response) destroymsg(response);
         if ((response = initmsg()) == NULL) {
             strcpy(errdesc, "initialising the response to be received");
             goto error;
@@ -330,18 +324,57 @@ int readNFiles(int N, const char *dirname) {
             strcpy(errdesc, "reading the response from server");
             goto error;
         }
-    }
+        if (response->header->code == ENODATA) {
+            errno = response->header->code;
+            break;
+        }
+        if (response->header->code != EXIT_SUCCESS) {
+            errno = response->header->code;
+            goto error;
+        }
+        if (dirname) {
+            if (storeFile(dirname, response->header->pathname, response->data, response->header->data_size) == -1) {
+                files_recv++;
+                verbose("< %s (%s) : there was an error storing the file received: %s. File %s corrupted\n", __func__, N,
+                        strerror(errno), response->header->pathname);
+                continue;
+            }
+        }
+        else printf("< %s (%s):\n%s\n", __func__, response->header->pathname, (char *) response->data);
 
+        files_recv++;
+        if (dirname) files_stored++;
+        if (dirname) bytes_stored += response->header->data_size;
+
+    } while (files_recv < response->header->arg);
+
+    files_recv
+    ? verbose("< %s (%d) completed: received %d files, read %d files, totaling %ld bytes, stored in %s\n",
+              __func__, N,files_recv, files_stored, bytes_stored, dirname)
+    : verbose("< %s (%d) completed: read %d files: %s\n",
+              __func__, N, files_stored, strerror(errno));
     destroymsg(request);
-    verbose("< %s (%d) completed with success: filesread %d files, totaling %d bytes, stored in %s\n", __func__, N, response->header->arg, bytesread, dirname);
-    return filesread;
+    destroymsg(response);
+    return files_stored;
 
     error:
-    verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, N, errdesc, strerror(errno));
+    files_recv
+    ? verbose("< %s (%s) failed: there was an error %s: %s. Received %d files, read %d files, totaling %ld bytes, stored in %s\n",
+              __func__, N, errdesc, strerror(errno), files_recv, files_stored, bytes_stored, dirname)
+    : verbose("< %s (%s) failed: there was an error %s: %s. No files read\n", __func__, N, errdesc, strerror(errno));
+    if (request) destroymsg(request);
+    if (response) destroymsg(response);
+    return -1;
 }
 
 int writeFile(const char *pathname, const char *dirname) {
     char errdesc[STRERROR_LEN] = "";
+    msg_t *request = NULL;
+    msg_t *response = NULL;
+    void *file_content = NULL;
+    int files_recv = 0;
+    int files_stored = 0;
+    size_t bytes_stored = 0;
 
     if (already_connected == false) {
         errno = ENOTCONN;
@@ -353,40 +386,58 @@ int writeFile(const char *pathname, const char *dirname) {
         goto error;
     }
     if (strlen(pathname) > MAX_PATH) {
-           strcpy(errdesc, "with argument patname");
+        strcpy(errdesc, "with argument patname");
         errno = ENAMETOOLONG;
         goto error;
     }
     if (dirname && strlen(dirname) > MAX_PATH) {
-           strcpy(errdesc, "with argument dirname");
+        strcpy(errdesc, "with argument dirname");
         errno = ENAMETOOLONG;
         goto error;
     }
 
     //lettura file da scrivere
     FILE *file_stream;
-    if (!(file_stream = fopen(pathname, "rb")))
+    if ((file_stream = fopen(pathname, "rb")) == NULL) {
+        strcpy(errdesc, "opening the file to be send");
         goto error;
-
+    }
     //Leggo il contenuto del file_stream lato client
     struct stat sb;
-    if (stat(pathname, &sb) == -1)
+    if (stat(pathname, &sb) == -1) {
+        strcpy(errdesc, "gathering file attributes");
         goto error;
+    }
     off_t file_size = sb.st_size;
     if (file_size == 0) {
+        if (fclose(file_stream) != 0) {
+            strcpy(errdesc, "closing the file");
+            goto error;
+        }
         errno = ENODATA;
-        fclose(file_stream);
+        strcpy(errdesc, "reading the file to be send");
         goto error;
     }
 
-    void *file_content = malloc(file_size);
-    if (!file_content) goto error;
-    while (!feof(file_stream))
+    file_content = malloc(file_size);
+    if (file_content == NULL) {
+        strcpy(errdesc, "allocating memory for file content");
+        goto error;
+    }
+    while (!feof(file_stream)) {
         fread(file_content, 1, file_size, file_stream);
+        if (ferror(file_stream)) {
+            errno = ENOTRECOVERABLE;
+            strcpy(errdesc, "reading file content");
+            goto error;
+        }
+    }
     //finito di leggere il file e chiudo lo stream
-    fclose(file_stream);
+    if (fclose(file_stream) != 0) {
+        strcpy(errdesc, "closing the file");
+        goto error;
+    }
 
-    msg_t *request;
     if ((request = buildmsg(username, WRITE, -1, pathname, file_size, file_content)) == NULL) {
         strcpy(errdesc, "building the message to be send");
         goto error;
@@ -396,29 +447,66 @@ int writeFile(const char *pathname, const char *dirname) {
         goto error;
     }
 
-    msg_t *response;
-    if ((response = initmsg()) == NULL) {
-        strcpy(errdesc, "initialising the response to be received");
-        goto error;
-    }
-    int totalrecv = 0;
-    if (readmsg(socketfd, response) <= 0) {
-        strcpy(errdesc, "reading the response from server");
-        goto error;
-    }
+    do {
+        if (response) destroymsg(response);
+        if ((response = initmsg()) == NULL) {
+            strcpy(errdesc, "initialising the response to be received");
+            goto error;
+        }
+        if (readmsg(socketfd, response) <= 0) {
+            strcpy(errdesc, "reading the response from server");
+            goto error;
+        }
+        if (response->header->code != EXIT_SUCCESS) {
+            errno = response->header->code;
+            goto error;
+        }
+        if (response->header->arg == 0) break;
 
-    verbose("< %s (%s) completed with success: written %d bytes, received %d ejected files, each stored in %s, occupying a total of %d bytes\n", __func__, pathname, response->header->arg, dirname, totalrecv);
+        if (dirname) {
+            if (storeFile(dirname, response->header->pathname, response->data, response->header->data_size) == -1) {
+                files_recv++;
+                verbose("< %s (%s) : there was an error storing the ejected file received: %s. File %s corrupted\n", __func__, request->header->pathname,
+                        strerror(errno), response->header->pathname);
+                continue;
+            }
+        } else printf("< %s (%s):\n%s\n", __func__, response->header->pathname, (char *) response->data);
+
+        files_recv++;
+        if (dirname) files_stored++;
+        if (dirname) bytes_stored += response->header->data_size;
+    } while (files_recv < response->header->arg);
+
+    files_recv
+    ? verbose("< %s (%s) completed: written %d bytes, received %d ejected files, stored %d in %s, occupying a total of %d bytes\n",
+              __func__, pathname, file_size, files_recv, files_stored, dirname, bytes_stored)
+    : verbose("< %s (%s) completed: written %d bytes. No ejected files received\n",
+              __func__, pathname, file_size);
+    destroymsg(request);
+    destroymsg(response);
+    free(file_content);
     return 0;
 
     error:
-    verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    files_recv
+    ? verbose("< %s (%s) failed: there was an error %s: %s. Received %d ejected files, stored %d in %s, occupying a total of %d bytes\n",
+              __func__, pathname, errdesc, strerror(errno), files_recv, files_stored, dirname, bytes_stored)
+    : verbose("< %s (%s) failed: there was an error %s: %s. No ejected files received\n",
+              __func__, pathname, errdesc,strerror(errno));
+    if (request) destroymsg(request);
+    if (response) destroymsg(response);
+    if (file_content) free(file_content);
     return -1;
 }
 
-//TODO size_t in tutte le funzioni
 int appendToFile(const char *pathname, void *buf, size_t size, const char *dirname) {
 
     char errdesc[STRERROR_LEN] = "";
+    msg_t *request = NULL;
+    msg_t *response = NULL;
+    int files_stored = 0;
+    int files_recv = 0;
+    size_t bytes_stored = 0;
 
     if (already_connected == false) {
         errno = ENOTCONN;
@@ -440,18 +528,17 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char *dirna
         goto error;
     }
     if (strlen(pathname) > MAX_PATH) {
-           strcpy(errdesc, "with argument pathname");
+        strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
     }
     if (dirname && strlen(dirname) > MAX_PATH) {
-           strcpy(errdesc, "with argument dirname");
+        strcpy(errdesc, "with argument dirname");
         errno = ENAMETOOLONG;
         goto error;
     }
 
 
-    msg_t *request;
     if ((request = buildmsg(username, APPEND, -1, pathname, size, buf)) == NULL) {
         strcpy(errdesc, "building the message to be send");
         goto error;
@@ -461,28 +548,64 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char *dirna
         goto error;
     }
 
-    msg_t *response;
-    if ((response = initmsg()) == NULL) {
-        strcpy(errdesc, "initialising the response to be received");
-        goto error;
-    }
-    int totalrecv = 0;
-    if (readmsg(socketfd, response) <= 0) {
-        strcpy(errdesc, "reading the response from server");
-        goto error;
-    }
+    do {
+        if (response) destroymsg(response);
+        if ((response = initmsg()) == NULL) {
+            strcpy(errdesc, "initialising the response to be received");
+            goto error;
+        }
+        if (readmsg(socketfd, response) <= 0) {
+            strcpy(errdesc, "reading the response from server");
+            goto error;
+        }
+        if (response->header->code != EXIT_SUCCESS) {
+            errno = response->header->code;
+            goto error;
+        }
+        if (response->header->arg == 0) break;
 
-    verbose("< %s (%s) completed with success: appended %d bytes, received %d ejected files, each stored in %s, occupying a total of %d bytes\n", __func__, pathname, response->header->arg, dirname, totalrecv);
+        if (dirname) {
+            if (storeFile(dirname, response->header->pathname, response->data, response->header->data_size) == -1) {
+                files_recv++;
+                verbose("< %s (%s) : there was an error storing the ejected file received: %s. File %s corrupted\n",
+                        __func__, request->header->pathname,
+                        strerror(errno), response->header->pathname);
+                continue;
+            }
+        } else printf("< %s (%s):\n%s\n", __func__, response->header->pathname, (char *) response->data);
+
+        files_recv++;
+        if (dirname) files_stored++;
+        if (dirname) bytes_stored += response->header->data_size;
+
+    } while (files_recv < response->header->arg);
+
+
+    files_recv
+    ? verbose("< %s (%s) completed: appended %d bytes, received %d ejected files, stored %d in %s, occupying a total of %d bytes\n",
+              __func__, pathname, size, files_recv, files_stored, dirname, bytes_stored)
+    : verbose("< %s (%s) completed: appended %d bytes. No ejected files received\n",
+              __func__, pathname, size);
+    destroymsg(response);
+    destroymsg(request);
     return 0;
 
     error:
-    verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    files_recv
+    ? verbose("< %s (%s) failed: there was an error %s: %s. Received %d ejected files, stored %d in %s, occupying a total of %d bytes\n",
+              __func__, pathname, errdesc, strerror(errno), files_recv, files_stored, dirname, bytes_stored)
+    : verbose("< %s (%s) failed: there was an error %s: %s. No ejected files received\n",
+              __func__, pathname,errdesc, strerror(errno));
+    if (request) destroymsg(request);
+    if (response) destroymsg(response);
     return -1;
 }
 
 int lockFile(const char *pathname) {
 
     char errdesc[STRERROR_LEN] = "";
+    msg_t *request = NULL;
+    msg_t *response = NULL;
 
     if (already_connected == false) {
         errno = ENOTCONN;
@@ -494,43 +617,58 @@ int lockFile(const char *pathname) {
         goto error;
     }
     if (strlen(pathname) > MAX_PATH) {
-           strcpy(errdesc, "with argument pathname");
+        strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
     }
 
+    int rescode;
+    do {
+        if ((request = buildmsg(username, LOCK, -1, pathname, 0, NULL)) == NULL) {
+            strcpy(errdesc, "building the message to be send");
+            goto error;
+        }
+        if (writemsg(socketfd, request) <= 0) {
+            strcpy(errdesc, "writing the request to server");
+            goto error;
+        }
 
-    msg_t *request;
-    if ((request = buildmsg(username, LOCK, -1, pathname, 0, NULL)) == NULL) {
-        strcpy(errdesc, "building the message to be send");
-        goto error;
-    }
-    if (writemsg(socketfd, request) <= 0) {
-        strcpy(errdesc, "writing the request to server");
-        goto error;
-    }
+        if ((response = initmsg()) == NULL) {
+            strcpy(errdesc, "initialising the response to be received");
+            goto error;
+        }
+        if (readmsg(socketfd, response) <= 0) {
+            strcpy(errdesc, "reading the response from server");
+            goto error;
+        }
+        rescode = response->header->code;
+        destroymsg(response);
+        response = NULL;
+        if (rescode != EXIT_SUCCESS && rescode != EBUSY){
+            errno = rescode;
+            goto error;
+        }
+        if (rescode == EBUSY)
+            verbose("< %s (%s) : Unable to lock the file at the moment, another user has exclusive access. Waiting ...\n", __func__, pathname);
 
-    msg_t *response;
-    if ((response = initmsg()) == NULL) {
-        strcpy(errdesc, "initialising the response to be received");
-        goto error;
-    }
-    if (readmsg(socketfd, response) <= 0) {
-        strcpy(errdesc, "reading the response from server");
-        goto error;
-    }
+    } while (rescode != EXIT_SUCCESS);
 
-    verbose("< %s (%s) completed with success\n", __func__, pathname);
+    verbose("< %s (%s) completed\n", __func__, pathname);
+    destroymsg(request);
     return 0;
 
     error:
     verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    if (request) destroymsg(request);
+    if (response) destroymsg(response);
     return -1;
 }
 
 int unlockFile(const char *pathname) {
 
     char errdesc[STRERROR_LEN] = "";
+    msg_t *request = NULL;
+    msg_t *response = NULL;
 
     if (already_connected == false) {
         errno = ENOTCONN;
@@ -542,12 +680,11 @@ int unlockFile(const char *pathname) {
         goto error;
     }
     if (strlen(pathname) > MAX_PATH) {
-           strcpy(errdesc, "with argument pathname");
+        strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
     }
 
-    msg_t *request;
     if ((request = buildmsg(username, UNLOCK, -1, pathname, 0, NULL)) == NULL) {
         strcpy(errdesc, "building the message to be send");
         goto error;
@@ -557,7 +694,6 @@ int unlockFile(const char *pathname) {
         goto error;
     }
 
-    msg_t *response;
     if ((response = initmsg()) == NULL) {
         strcpy(errdesc, "initialising the response to be received");
         goto error;
@@ -567,17 +703,24 @@ int unlockFile(const char *pathname) {
         goto error;
     }
 
-    verbose("< %s (%s) completed with success\n", __func__, pathname);
+    verbose("< %s (%s) completed\n", __func__, pathname);
+    destroymsg(request);
+    destroymsg(response);
     return 0;
 
     error:
     verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    if (request) destroymsg(request);
+    if (response) destroymsg(response);
+
     return -1;
 }
 
 int closeFile(const char *pathname) {
 
     char errdesc[STRERROR_LEN] = "";
+    msg_t *request = NULL;
+    msg_t *response = NULL;
 
     if (already_connected == false) {
         errno = ENOTCONN;
@@ -589,13 +732,11 @@ int closeFile(const char *pathname) {
         goto error;
     }
     if (strlen(pathname) > MAX_PATH) {
-           strcpy(errdesc, "with argument pathname");
+        strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
     }
 
-
-    msg_t *request;
     if ((request = buildmsg(username, CLOSE, -1, pathname, 0, NULL)) == NULL) {
         strcpy(errdesc, "building the message to be send");
         goto error;
@@ -605,7 +746,6 @@ int closeFile(const char *pathname) {
         goto error;
     }
 
-    msg_t *response;
     if ((response = initmsg()) == NULL) {
         strcpy(errdesc, "initialising the response to be received");
         goto error;
@@ -615,17 +755,24 @@ int closeFile(const char *pathname) {
         goto error;
     }
 
-    verbose("< %s (%s) completed with success\n", __func__, pathname);
+    verbose("< %s (%s) completed\n", __func__, pathname);
+    destroymsg(request);
+    destroymsg(response);
     return 0;
 
     error:
     verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    if (request) destroymsg(request);
+    if (response) destroymsg(response);
+
     return -1;
 }
 
 int removeFile(const char *pathname) {
 
     char errdesc[STRERROR_LEN] = "";
+    msg_t *request = NULL;
+    msg_t *response = NULL;
 
     if (already_connected == false) {
         errno = ENOTCONN;
@@ -637,12 +784,11 @@ int removeFile(const char *pathname) {
         goto error;
     }
     if (strlen(pathname) > MAX_PATH) {
-           strcpy(errdesc, "with argument pathname");
+        strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
     }
 
-    msg_t *request;
     if ((request = buildmsg(username, REMOVE, -1, pathname, 0, NULL)) == NULL) {
         strcpy(errdesc, "building the message to be send");
         goto error;
@@ -652,7 +798,6 @@ int removeFile(const char *pathname) {
         goto error;
     }
 
-    msg_t *response;
     if ((response = initmsg()) == NULL) {
         strcpy(errdesc, "initialising the response to be received");
         goto error;
@@ -662,12 +807,38 @@ int removeFile(const char *pathname) {
         goto error;
     }
 
-    verbose("< %s (%s) completed with success\n", __func__, pathname);
+    verbose("< %s (%s) completed\n", __func__, pathname);
+    destroymsg(request);
+    destroymsg(response);
     return 0;
 
     error:
     verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    if (request) destroymsg(request);
+    if (response) destroymsg(response);
+
     return -1;
+}
+
+int storeFile(const char *dirname, char *filename, void *data, size_t data_size) {
+
+    char *storepath = NULL;
+    FILE *ptr = NULL;
+
+    if ((storepath = strnconcat(dirname, filename, NULL)) == NULL) return -1;
+    if (mkdirs(storepath) == -1) return -1;
+    if ((ptr = fopen(storepath, "w+")) == NULL) return -1;
+#if DEBUG
+    printf("errno dopo fopen %d\n", errno);
+#endif
+    if (fwrite(data, 1, data_size, ptr) != data_size) {
+        errno = ENOTRECOVERABLE;
+        return -1;
+    }
+    if (fclose(ptr) != 0) return -1;
+
+    free(storepath);
+    return 0;
 }
 
 int verbose(const char *restrict format, ...) {
