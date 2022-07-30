@@ -4,15 +4,12 @@
 
 #include <pthread.h>
 
-#include "icl_hash.h"
-#include "util.h"
-#include "conn.h"
-#include "list.h"
-#include "queue.h"
+#include <icl_hash.h>
+#include <list.h>
 
 typedef struct file_{
     char *filename;
-    unsigned int size;
+    size_t size;
     void *content;
     char *client_locker;
     list_t *who_opened;
@@ -21,10 +18,10 @@ typedef struct file_{
 
 typedef struct storage_{
     int files_limit;
-    unsigned long long memory_limit; //bytes
+    size_t memory_limit; //bytes
 
     int files_number;
-    unsigned long long occupied_memory; //bytes
+    size_t occupied_memory; //bytes
     icl_hash_t *files;
     list_t* filenames_queue;
     pthread_rwlock_t *mutex;
@@ -32,7 +29,7 @@ typedef struct storage_{
 
     //Statistiche
     int max_files_number;
-    unsigned long long max_occupied_memory;
+    size_t max_occupied_memory;
     int replace_mode;
     int times_replacement_algorithm;
 
@@ -45,7 +42,7 @@ typedef struct storage_{
  * @param replace_mode  modalità di rimpiazzamento dei file a causa di capacity miss
  * @return puntatore allo storage creato, NULL in caso di errore
  */
-storage_t* fs_init(int max_files, unsigned long long max_capacity, int replace_mode);
+storage_t* fs_init(int max_files, size_t max_capacity, int replace_mode);
 
 /**
  * @brief Dealloca lo storage
@@ -74,7 +71,7 @@ int fs_openFile(storage_t* storage, char* filename, int flags, char *client);
  * @param bytes_read  numero di byte letti dal file
  * @return un intero che indica se l'operazione è stata completata con successo oppure il tipo di errore verficatosi
  */
-int fs_readFile(storage_t *storage, char *pathname, char *client, void **buf, unsigned long *bytes_read);
+int fs_readFile(storage_t *storage, char *pathname, char *client, void **buf, size_t *bytes_read);
 
 /**
  * @brief Legge N file qualsiasi dallo storage (che hanno un contenuto > 0), se N <= 0 vengono letti tutti quelli
@@ -152,7 +149,7 @@ int fs_closeFile(storage_t* storage, char* filename, char *client);
  * @param deleted_bytes  bytes rimossi
  * @return un intero che indica se l'operazione è stata completata con successo oppure il tipo di errore verficatosi
  */
-int fs_removeFile(storage_t* storage, char* filename, char *client, unsigned long *deleted_bytes);
+int fs_removeFile(storage_t* storage, char* filename, char *client, size_t *deleted_bytes);
 
 /**
  * @brief Dealloca un file

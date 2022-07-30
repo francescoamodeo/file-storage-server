@@ -1,9 +1,12 @@
+#include <stdlib.h>
 
-#include "storage.h"
-#include "filestorage.h"
-#include "protocol.h"
+#include <storage.h>
+#include <protocol.h>
 
-storage_t *fs_init(int max_files, unsigned long long max_capacity, int replace_mode) {
+int select_victims(int op, storage_t *storage, file_t *file, size_t file_size, list_t *filesEjected);
+int eject_victims(storage_t *storage, list_t *filesEjected);
+
+storage_t *fs_init(int max_files, size_t max_capacity, int replace_mode) {
 
     if (max_files <= 0 || max_capacity <= 0)
         return NULL;
@@ -242,7 +245,7 @@ int fs_openFile(storage_t *storage, char *filename, int flags, char *client) {
     return returnc;
 }
 
-int fs_readFile(storage_t *storage, char *filename, char *client, void **buf, unsigned long *bytes_read) {
+int fs_readFile(storage_t *storage, char *filename, char *client, void **buf, size_t *bytes_read) {
 
     if (!storage || !filename || !bytes_read || !client)
         return EINVAL;
@@ -449,7 +452,6 @@ int fs_writeFile(storage_t *storage, char *filename, size_t file_size, void *fil
         return EINVAL;
 
     int returnc;
-    file_t *toEject_copy = NULL;
     char *toWrite_filename = NULL;
 
     //Devo controllare che il file esista e che sia aperto e locked dal client
@@ -531,58 +533,13 @@ int fs_writeFile(storage_t *storage, char *filename, size_t file_size, void *fil
         goto error;
     }
 
+    printf("PRIMA DEL RIMPIAZZAMENTO: storage: %zu, storagefiles: %d, filesize: %zu\n", storage->occupied_memory, storage->files_number, file_size);
     //Rimpiazzamento file
     //Se aumentando di 1 il numero di file e aggiungendo la dimensione del file rimango nei limiti
     //allora non devo fare rimpiazzamenti
-    elem_t *possible_victim = list_gethead(storage->filenames_queue);
-    while ((storage->files_number + 1 > storage->files_limit) ||
-           (storage->occupied_memory + file_size > storage->memory_limit)) {
-#if DEBUG
-        printf("cerco vittime\n");
-#endif
-
-        //non c'è abbastanza spazio e devo liberare dei file
-        //prendo il nome del primo file da eliminare (FIFO)
-        if (possible_victim == NULL) {
-            //se siamo arrivati qui avevamo bisogno di liberare spazio, ma non abbiamo file da espellere -> inconsistenza
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        //Vado a cercarlo nello storage
-        file_t *toEject = icl_hash_find(storage->files, possible_victim->data);
-        if (toEject == NULL) {
-            //presente nella lista ma non nello storage -> inconsistenza
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        if (pthread_rwlock_rdlock(toEject->mutex) != 0) {
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        if ((toEject_copy = fs_filecreate(toEject->filename, toEject->size, toEject->content, O_CREATE, NULL)) ==
-            NULL) {
-            if (pthread_rwlock_unlock(toWrite->mutex) != 0) {
-                returnc = ENOTRECOVERABLE;
-                goto error;
-            }
-            if (pthread_rwlock_unlock(toEject->mutex) != 0) {
-                returnc = ENOTRECOVERABLE;
-                goto error;
-            }
-            if (pthread_rwlock_unlock(storage->mutex) != 0) {
-                returnc = ENOTRECOVERABLE;
-                goto error;
-            }
-            returnc = ECANCELED;
-            goto error;
-        }
-        if (pthread_rwlock_unlock(toEject->mutex) != 0) {
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        //Aggiungo alla lista dei file espulsi da spedire al client
-        if (list_add(filesEjected, toEject_copy) == NULL) {
-            //problema interno alla lista
+    if (storage->files_number + 1 > storage->files_limit || storage->occupied_memory + file_size > storage->memory_limit) {
+        if ((returnc = select_victims(WRITE, storage, toWrite, file_size, filesEjected)) != EXIT_SUCCESS
+            || (returnc = eject_victims(storage, filesEjected)) != EXIT_SUCCESS) {
             if (pthread_rwlock_unlock(toWrite->mutex) != 0) {
                 returnc = ENOTRECOVERABLE;
                 goto error;
@@ -591,61 +548,10 @@ int fs_writeFile(storage_t *storage, char *filename, size_t file_size, void *fil
                 returnc = ENOTRECOVERABLE;
                 goto error;
             }
-            returnc = ECANCELED;
             goto error;
         }
-        possible_victim = list_getnext(storage->filenames_queue, possible_victim);
+        printf("VITTIME ELIMINATE\n");
     }
-    possible_victim = NULL;
-
-    //dopo che ho selezionato le vittime e preparato la lista da spedire al client senza errori posso
-    //procedere all'eliminazione
-    elem_t *toEject_file_elem = list_gethead(filesEjected);
-    elem_t *victim = NULL;
-    while (toEject_file_elem != NULL) {
-#if DEBUG
-        printf("cancello vittime\n");
-#endif
-
-        file_t *toEject_file = (file_t *) toEject_file_elem->data;
-        victim = list_remove(storage->filenames_queue, toEject_file->filename, (int (*)(void *, void *)) strcmp);
-        if (victim == NULL) {
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        //Prendo il riferimento nello storage
-        file_t *toEject = icl_hash_find(storage->files, victim->data);
-        if (toEject == NULL) {
-            //presente nella lista ma non nello storage -> inconsistenza
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        if (pthread_rwlock_wrlock(toEject->mutex) != 0) {
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        //Lo elimino dallo storage
-        if (icl_hash_delete(storage->files, toEject->filename, free, NULL) != 0) {
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        //posso fare la unlock tranquillamente perchè adesso nessun thread avrà il riferimento al file appena espulso
-        if (pthread_rwlock_unlock(toEject->mutex) != 0) {
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        //Modifico lo storage per l'eliminazione
-        storage->occupied_memory -= toEject->size;
-        storage->files_number--;
-        storage->times_replacement_algorithm++;
-
-        fs_filedestroy(toEject);
-        free(victim->data);
-        free(victim);
-
-        toEject_file_elem = list_getnext(filesEjected, toEject_file_elem);
-    }
-
     //allochiamo lo spazio necessario per il contenuto del file
     if ((toWrite->content = malloc(file_size)) == NULL) {
         //inconsistenza perchè a questo punto abbiamo già espulso gli eventuali file per fare spazio al contenuto da
@@ -667,6 +573,8 @@ int fs_writeFile(storage_t *storage, char *filename, size_t file_size, void *fil
         returnc = ENOTRECOVERABLE;
         goto error;
     }
+    printf("HO SCRITTO IL FILE %s\n", toWrite_filename);
+    printf("lunghezza lista: %d\n", storage->filenames_queue->length);
     //modifico variabili dello storage
     storage->occupied_memory += file_size;
     storage->files_number++;
@@ -689,7 +597,6 @@ int fs_writeFile(storage_t *storage, char *filename, size_t file_size, void *fil
     return EXIT_SUCCESS;
 
     error:
-    if (toEject_copy) fs_filedestroy(toEject_copy);
     if (toWrite_filename) free(toWrite_filename);
     return returnc;
 }
@@ -700,7 +607,6 @@ int fs_appendToFile(storage_t *storage, char *filename, size_t size, void *data,
         return EINVAL;
 
     int returnc;
-    file_t *toEject_copy = NULL;
 
     if (pthread_rwlock_wrlock(storage->mutex) != 0) {
         returnc = ENOTRECOVERABLE;
@@ -766,107 +672,20 @@ int fs_appendToFile(storage_t *storage, char *filename, size_t size, void *data,
     //Rimpiazzamento file
     //Se a aggiungendo la dimensione del file rimango nei limiti
     //allora non devo fare rimpiazzamenti
-    elem_t *possible_victim = list_gethead(storage->filenames_queue);
-    while (storage->occupied_memory + size > storage->memory_limit) {
-
-        //non c'è abbastanza spazio e devo liberare dei file
-        //prendo il nome del primo file da eliminare (FIFO)
-        //Vado a rimuovere dalla lista il primo elemento diverso dal file che devo scrivere
-        if (possible_victim == NULL) {
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        if (strcmp(possible_victim->data, toAppend->filename) != 0) {
-            //Vado a cercarlo nello storage
-            file_t *toEject = icl_hash_find(storage->files, possible_victim->data);
-            if (toEject == NULL) {
+    if (storage->occupied_memory + size > storage->memory_limit) {
+        if ((returnc = select_victims(APPEND, storage, toAppend, size, filesEjected)) != EXIT_SUCCESS
+            || (returnc = eject_victims(storage, filesEjected)) != EXIT_SUCCESS) {
+            if (pthread_rwlock_unlock(toAppend->mutex) != 0) {
                 returnc = ENOTRECOVERABLE;
                 goto error;
             }
-            if (pthread_rwlock_rdlock(toEject->mutex) != 0) {
+            if (pthread_rwlock_unlock(storage->mutex) != 0) {
                 returnc = ENOTRECOVERABLE;
                 goto error;
             }
-            //Creo e aggiungo una copia del file alla lista dei file espulsi
-            if ((toEject_copy = fs_filecreate(toEject->filename, toEject->size, toEject->content, O_CREATE, NULL)) ==
-                NULL) {
-                if (pthread_rwlock_unlock(toAppend->mutex) != 0) {
-                    returnc = ENOTRECOVERABLE;
-                    goto error;
-                }
-                if (pthread_rwlock_unlock(toEject->mutex) != 0) {
-                    returnc = ENOTRECOVERABLE;
-                    goto error;
-                }
-                if (pthread_rwlock_unlock(storage->mutex) != 0) {
-                    returnc = ENOTRECOVERABLE;
-                    goto error;
-                }
-                returnc = ECANCELED;
-                goto error;
-            }
-            if (pthread_rwlock_unlock(toEject->mutex) != 0) {
-                returnc = ENOTRECOVERABLE;
-                goto error;
-            }
-            //Aggiungo alla lista
-            if (list_add(filesEjected, toEject_copy) == NULL) {
-                if (pthread_rwlock_unlock(toAppend->mutex) != 0) {
-                    returnc = ENOTRECOVERABLE;
-                    goto error;
-                }
-                if (pthread_rwlock_unlock(storage->mutex) != 0) {
-                    returnc = ENOTRECOVERABLE;
-                    goto error;
-                }
-                returnc = ECANCELED;
-                goto error;
-            }
-        }
-        possible_victim = list_getnext(storage->filenames_queue, possible_victim);
-    }
-    possible_victim = NULL;
-
-    //procedo all'eliminazione
-    elem_t *toEject_file_elem = list_gethead(filesEjected);
-    elem_t *victim = NULL;
-    while (toEject_file_elem != NULL) {
-
-        file_t *toEject_file = (file_t *) toEject_file_elem->data;
-        victim = list_remove(storage->filenames_queue, toEject_file->filename, (int (*)(void *, void *)) strcmp);
-        if (victim == NULL) {
-            returnc = ENOTRECOVERABLE;
             goto error;
         }
-        //prendo il riferimento nello storage
-        file_t *toEject = icl_hash_find(storage->files, victim->data);
-        if (toEject == NULL) {
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        if (pthread_rwlock_wrlock(toEject->mutex) != 0) {
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        if (icl_hash_delete(storage->files, toEject->filename, free, NULL) != 0) {
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        //posso fare la unlock tranquillamente perchè adesso nessun thread avrà il riferimento al file appena espulso
-        if (pthread_rwlock_unlock(toEject->mutex) != 0) {
-            returnc = ENOTRECOVERABLE;
-            goto error;
-        }
-        //Modifico lo storage per l'eliminazione
-        storage->occupied_memory -= toEject->size;
-        storage->files_number--;
-        storage->times_replacement_algorithm++;
-
-        fs_filedestroy(toEject);
-        free(victim->data);
-        free(victim);
-
-        toEject_file_elem = list_getnext(filesEjected, toEject_file_elem);
+        printf("VITTIME ELIMINATE\n");
     }
 
     //A questo punto c'è sufficiente spazio per ospitare i nuovi dati e quindi faccio la append
@@ -897,7 +716,6 @@ int fs_appendToFile(storage_t *storage, char *filename, size_t size, void *data,
     return EXIT_SUCCESS;
 
     error:
-    if (toEject_copy) fs_filedestroy(toEject_copy);
     return returnc;
 }
 
@@ -1088,7 +906,7 @@ int fs_closeFile(storage_t *storage, char *filename, char *client) {
     return returnc;
 }
 
-int fs_removeFile(storage_t *storage, char *filename, char *client, unsigned long *deleted_bytes) {
+int fs_removeFile(storage_t *storage, char *filename, char *client, size_t *deleted_bytes) {
 
     if (!storage || !filename || !deleted_bytes || !client)
         return EINVAL;
@@ -1234,5 +1052,97 @@ void fs_stats(storage_t *storage) {
     printf("    - REPLACEMENT ALGORITM EXECUTED: %d TIMES\n", storage->times_replacement_algorithm);
     printf("    - FILES CURRENTLY STORED: %d\n", storage->files_number);
     list_tostring(storage->filenames_queue);
+}
+
+int select_victims(int op, storage_t *storage, file_t *file, size_t file_size, list_t *filesEjected) {
+    if (!storage || !file || !filesEjected || file_size < 0)
+        return EINVAL;
+    if (file_size > storage->memory_limit)
+        return EINVAL;
+
+    file_t *toEject_copy = NULL;
+    int curr_files_number = storage->files_number;
+    size_t curr_occupied_memory = storage->occupied_memory;
+    elem_t *possible_victim;
+    for ( possible_victim = list_gethead(storage->filenames_queue)
+        ; (op == WRITE && curr_files_number + 1 > storage->files_limit) || (curr_occupied_memory + file_size > storage->memory_limit)
+        ; possible_victim = list_getnext(storage->filenames_queue, possible_victim) ) {
+#if DEBUG
+        printf("cerco vittime\n");
+#endif
+
+        if (possible_victim == NULL) {
+            printf("VITTIMA NULL!!!\n");
+            //se siamo arrivati qui avevamo bisogno di liberare spazio, ma non abbiamo file da espellere -> inconsistenza
+            return ENOTRECOVERABLE;
+        }
+        if (op == APPEND && strcmp(possible_victim->data, file->filename) == 0) continue;
+        //non c'è abbastanza spazio e devo liberare dei file
+        //prendo il nome del primo file da eliminare (FIFO)
+        //Vado a cercarlo nello storage
+        file_t *toEject = icl_hash_find(storage->files, possible_victim->data);
+        //presente nella lista ma non nello storage -> inconsistenza
+        if (toEject == NULL) return ENOTRECOVERABLE;
+        if (pthread_rwlock_rdlock(toEject->mutex) != 0) return ENOTRECOVERABLE;
+        if ((toEject_copy = fs_filecreate(toEject->filename, toEject->size, toEject->content, O_CREATE, NULL)) == NULL) {
+            if (pthread_rwlock_unlock(toEject->mutex) != 0) return ENOTRECOVERABLE;
+            return ECANCELED;
+        }
+        if (pthread_rwlock_unlock(toEject->mutex) != 0) {
+            fs_filedestroy(toEject_copy);
+            return ENOTRECOVERABLE;
+        }
+        //Aggiungo alla lista dei file espulsi da spedire al client
+        if (list_add(filesEjected, toEject_copy) == NULL) {
+            fs_filedestroy(toEject_copy);
+            return ECANCELED;
+        }
+        curr_files_number--;
+        curr_occupied_memory -= toEject_copy->size;
+    }
+    possible_victim = NULL;
+    printf("VITTIME SELEZIONATE, list length: %d\n", filesEjected->length);
+    return EXIT_SUCCESS;
+}
+
+int eject_victims(storage_t *storage, list_t *filesEjected){
+    if (!storage || !filesEjected)
+        return EINVAL;
+
+    elem_t *toEject_file_elem = list_gethead(filesEjected);
+    elem_t *victim = NULL;
+    while (toEject_file_elem != NULL) {
+#if DEBUG
+        printf("cancello vittime\n");
+#endif
+
+        file_t *toEject_file = (file_t *) toEject_file_elem->data;
+        victim = list_remove(storage->filenames_queue, toEject_file->filename, (int (*)(void *, void *)) strcmp);
+        //presente nella lista da espellere ma non nella lista dello storage -> inconsistenza
+        if (victim == NULL) return ENOTRECOVERABLE;
+
+        //Prendo il riferimento nello storage
+        file_t *toEject = icl_hash_find(storage->files, victim->data);
+        //presente nella lista dello storage ma non nella cache dello storage -> inconsistenza
+        if (toEject == NULL) return ENOTRECOVERABLE;
+
+        if (pthread_rwlock_wrlock(toEject->mutex) != 0) return ENOTRECOVERABLE;
+        //Lo elimino dallo storage
+        if (icl_hash_delete(storage->files, toEject->filename, free, NULL) != 0)
+            return ENOTRECOVERABLE;
+        if (pthread_rwlock_unlock(toEject->mutex) != 0) return ENOTRECOVERABLE;
+
+        //Modifico lo storage in seguito all'eliminazione
+        storage->occupied_memory -= toEject->size;
+        storage->files_number--;
+        storage->times_replacement_algorithm++;
+
+        fs_filedestroy(toEject);
+        free(victim->data);
+        free(victim);
+
+        toEject_file_elem = list_getnext(filesEjected, toEject_file_elem);
+    }
+    return EXIT_SUCCESS;
 }
 
