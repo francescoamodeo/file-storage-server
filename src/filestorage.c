@@ -1,17 +1,16 @@
 
-#include "util.h"
-#include <time.h>
-#include "conn.h"
-#include "filestorage.h"
-#include "protocol.h"
+#include <stdlib.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
+#include <filestorage.h>
+#include <protocol.h>
 
 bool Verbose = false;
 bool already_connected = false;
 char *username;
 int socketfd = -1;
 char *socketname;
-
-int storeFile(const char *dirname, char *filename, void *data, size_t data_size);
 
 int openConnection(const char *sockname, int msec, const struct timespec abstime) {
 #if DEBUG
@@ -52,10 +51,10 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
     time_t now;
     time(&now);
     int connres;
-    verbose("< Connecting to server ...\n");
+    verbose("< %s: Connecting to server ...\n", username);
     while ((connres = connect(socketfd, (struct sockaddr *) &sa, sizeof(sa)) == -1)
            && now < abstime.tv_sec) {
-        verbose("< Unable to connect to server. Retry in %d msec\n", msec);
+        verbose("< %s: Unable to connect to server. Retry in %d msec\n", username, msec);
 
         msleep(msec);
         time(&now);
@@ -71,11 +70,11 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
         goto error;
     }
 
-    verbose("< %s (%s) completed: connection with server established\n", __func__, sockname);
+    verbose("< %s: %s (%s) completed: connection with server established\n", username, __func__, sockname);
     return 0;
 
     error:
-    verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, sockname, errdesc, strerror(errno));
+    verbose("< %s: %s (%s) failed: there was an error %s: %s\n", username, __func__, sockname, errdesc, strerror(errno));
     return -1;
 }
 
@@ -100,42 +99,43 @@ int closeConnection(const char *sockname) {
         goto error;
     }
 
-    verbose("< Closing connection ...\n");
-    if ((request = buildmsg(username, FIN, -1, NULL, 0, NULL)) == NULL) {
-        strcpy(errdesc, "building the message to be send");
-        goto error;
-    }
-    if (writemsg(socketfd, request) <= 0) {
-        strcpy(errdesc, "writing the request to server");
-        goto error;
-    }
+    verbose("< %s: Closing connection ...\n", username);
+    if (errno != ECONNRESET) {
+        if ((request = buildmsg(username, FIN, -1, NULL, 0, NULL)) == NULL) {
+            strcpy(errdesc, "building the message to be send");
+            goto error;
+        }
+        if (writemsg(socketfd, request) <= 0) {
+            strcpy(errdesc, "writing the request to server");
+            goto error;
+        }
 
-    if ((response = initmsg()) == NULL) {
-        strcpy(errdesc, "initialising the response to be received");
-        goto error;
+        if ((response = initmsg()) == NULL) {
+            strcpy(errdesc, "initialising the response to be received");
+            goto error;
+        }
+        if (readmsg(socketfd, response) < 0) {
+            strcpy(errdesc, "reading the response from server");
+            goto error;
+        }
+        if (response->header->code != EXIT_SUCCESS) {
+            errno = response->header->code;
+            goto error;
+        }
     }
-    if (readmsg(socketfd, response) <= 0) {
-        strcpy(errdesc, "reading the response from server");
-        goto error;
-    }
-    if (response->header->code != EXIT_SUCCESS) {
-        errno = response->header->code;
-        goto error;
-    }
-
     if (close(socketfd) == -1) {
         strcpy(errdesc, "closing socket");
         goto error;
     }
     already_connected = false;
 
-    verbose("< %s (%s) completed: connection closed successfully\n", __func__, sockname);
-    destroymsg(request);
-    destroymsg(response);
+    verbose("< %s: %s (%s) completed: connection closed successfully\n", username, __func__, sockname);
+    if (request) destroymsg(request);
+    if (response) destroymsg(response);
     return 0;
 
     error:
-    verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, sockname, errdesc, strerror(errno));
+    verbose("< %s: %s (%s) failed: there was an error %s: %s\n", username, __func__, sockname, errdesc, strerror(errno));
     if (request) destroymsg(request);
     if (response) destroymsg(response);
     return -1;
@@ -203,13 +203,13 @@ int openFile(const char *pathname, int flags) {
         goto error;
     }
 
-    verbose("< %s (%s) completed\n", __func__, pathname);
+    verbose("< %s: %s (%s) completed\n", username, __func__, pathname);
     destroymsg(request);
     destroymsg(response);
     return 0;
 
     error:
-    verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    verbose("< %s: %s (%s) failed: there was an error %s: %s\n", username, __func__, pathname, errdesc, strerror(errno));
     if (request) destroymsg(request);
     if (response) destroymsg(response);
     return -1;
@@ -269,13 +269,13 @@ int readFile(const char *pathname, void **buf, size_t *size) {
     memcpy(*buf, response->data, response->header->data_size);
     *size = response->header->data_size;
 
-    verbose("< %s (%s) completed: read %d bytes\n", __func__, pathname, response->header->data_size);
+    verbose("< %s: %s (%s) completed: read %d bytes\n", username, __func__, pathname, response->header->data_size);
     destroymsg(request);
     destroymsg(response);
     return 0;
 
     error:
-    verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    verbose("< %s: %s (%s) failed: there was an error %s: %s\n", username, __func__, pathname, errdesc, strerror(errno));
     if (*buf) free(*buf);
     if (request) destroymsg(request);
     if (response) destroymsg(response);
@@ -332,15 +332,29 @@ int readNFiles(int N, const char *dirname) {
             errno = response->header->code;
             goto error;
         }
+        if (response->header->arg == 0) break;
+
         if (dirname) {
             if (storeFile(dirname, response->header->pathname, response->data, response->header->data_size) == -1) {
                 files_recv++;
-                verbose("< %s (%s) : there was an error storing the file received: %s. File %s corrupted\n", __func__, N,
+                verbose("< %s: %s (%s) : there was an error storing the file received: %s. File %s corrupted\n", username, __func__, N,
                         strerror(errno), response->header->pathname);
                 continue;
             }
         }
-        else printf("< %s (%s):\n%s\n", __func__, response->header->pathname, (char *) response->data);
+        else {
+            char *toPrint = malloc((response->header->data_size + 1) * sizeof(char));
+            if (toPrint == NULL){
+                files_recv++;
+                verbose("< %s: %s (%s) : there was an error printing the file received: %s. File %s skipped\n", username, __func__, N,
+                        strerror(errno), response->header->pathname);
+                continue;
+            }
+            memcpy(toPrint, response->data, response->header->data_size);
+            toPrint[response->header->data_size] = 0;
+            printf("< %s: %s (%s):\n%s\n", username, __func__, response->header->pathname, toPrint);
+            free(toPrint);
+        }
 
         files_recv++;
         if (dirname) files_stored++;
@@ -348,20 +362,25 @@ int readNFiles(int N, const char *dirname) {
 
     } while (files_recv < response->header->arg);
 
-    files_recv
-    ? verbose("< %s (%d) completed: received %d files, read %d files, totaling %ld bytes, stored in %s\n",
-              __func__, N,files_recv, files_stored, bytes_stored, dirname)
-    : verbose("< %s (%d) completed: read %d files: %s\n",
-              __func__, N, files_stored, strerror(errno));
+    files_recv ?
+        (dirname ?
+             verbose("< %s: %s (%d) completed: received %d files, stored %d in %s, occupying a total of %ld bytes\n", username,
+                     __func__, N,files_recv, files_stored, dirname, bytes_stored)
+           : verbose("< %s: %s (%d) completed: received %d files\n", username,
+                     __func__, N,files_recv))
+    : verbose("< %s: %s (%d) completed: read %d files: %s\n", username,__func__, N, files_stored, strerror(errno));
     destroymsg(request);
     destroymsg(response);
-    return files_stored;
+    return dirname ? files_stored : files_recv;
 
     error:
-    files_recv
-    ? verbose("< %s (%s) failed: there was an error %s: %s. Received %d files, read %d files, totaling %ld bytes, stored in %s\n",
-              __func__, N, errdesc, strerror(errno), files_recv, files_stored, bytes_stored, dirname)
-    : verbose("< %s (%s) failed: there was an error %s: %s. No files read\n", __func__, N, errdesc, strerror(errno));
+    files_recv ?
+        (dirname ?
+            verbose("< %s: %s (%s) failed: there was an error %s: %s. Received %d files, stored %d in %s, occupying a total of %ld bytes\n", username,
+                    __func__, N, errdesc, strerror(errno), files_recv, files_stored, dirname, bytes_stored)
+          : verbose("< %s: %s (%s) failed: there was an error %s: %s. Received %d files\n", username,
+                    __func__, N, errdesc, strerror(errno), files_recv))
+    : verbose("< %s: %s (%s) failed: there was an error %s: %s. No files read\n", username, __func__, N, errdesc, strerror(errno));
     if (request) destroymsg(request);
     if (response) destroymsg(response);
     return -1;
@@ -466,21 +485,35 @@ int writeFile(const char *pathname, const char *dirname) {
         if (dirname) {
             if (storeFile(dirname, response->header->pathname, response->data, response->header->data_size) == -1) {
                 files_recv++;
-                verbose("< %s (%s) : there was an error storing the ejected file received: %s. File %s corrupted\n", __func__, request->header->pathname,
+                verbose("< %s: %s (%s) : there was an error storing the ejected file received: %s. File %s corrupted\n", username, __func__, request->header->pathname,
                         strerror(errno), response->header->pathname);
                 continue;
             }
-        } else printf("< %s (%s):\n%s\n", __func__, response->header->pathname, (char *) response->data);
+        } else {
+            char *toPrint = malloc((response->header->data_size + 1) * sizeof(char));
+            if (toPrint == NULL) {
+                files_recv++;
+                verbose("< %s: %s (%s) : there was an error printing the file received: %s. File %s skipped\n", username, __func__,
+                        request->header->pathname, strerror(errno), response->header->pathname);
+                continue;
+            }
+            memcpy(toPrint, response->data, response->header->data_size);
+            toPrint[response->header->data_size] = 0;
+            printf("< %s: %s (%s):\n%s\n", username, __func__, response->header->pathname, toPrint);
+        }
 
         files_recv++;
         if (dirname) files_stored++;
         if (dirname) bytes_stored += response->header->data_size;
     } while (files_recv < response->header->arg);
 
-    files_recv
-    ? verbose("< %s (%s) completed: written %d bytes, received %d ejected files, stored %d in %s, occupying a total of %d bytes\n",
-              __func__, pathname, file_size, files_recv, files_stored, dirname, bytes_stored)
-    : verbose("< %s (%s) completed: written %d bytes. No ejected files received\n",
+    files_recv ?
+        (dirname ?
+            verbose("< %s: %s (%s) completed: written %d bytes, received %d ejected files, stored %d in %s, occupying a total of %d bytes\n", username,
+                    __func__, pathname, file_size, files_recv, files_stored, dirname, bytes_stored)
+          : verbose("< %s: %s (%s) completed: written %d bytes, received %d ejected files\n", username,
+                    __func__, pathname, file_size, files_recv))
+    : verbose("< %s: %s (%s) completed: written %d bytes. No ejected files received\n", username,
               __func__, pathname, file_size);
     destroymsg(request);
     destroymsg(response);
@@ -488,10 +521,13 @@ int writeFile(const char *pathname, const char *dirname) {
     return 0;
 
     error:
-    files_recv
-    ? verbose("< %s (%s) failed: there was an error %s: %s. Received %d ejected files, stored %d in %s, occupying a total of %d bytes\n",
-              __func__, pathname, errdesc, strerror(errno), files_recv, files_stored, dirname, bytes_stored)
-    : verbose("< %s (%s) failed: there was an error %s: %s. No ejected files received\n",
+    files_recv ?
+        (dirname ?
+            verbose("< %s: %s (%s) failed: there was an error %s: %s. Received %d ejected files, stored %d in %s, occupying a total of %d bytes\n", username,
+                    __func__, pathname, errdesc, strerror(errno), files_recv, files_stored, dirname, bytes_stored)
+          : verbose("< %s: %s (%s) failed: there was an error %s: %s. Received %d ejected files\n", username,
+                    __func__, pathname, errdesc, strerror(errno), files_recv))
+    : verbose("< %s: %s (%s) failed: there was an error %s: %s. No ejected files received\n", username,
               __func__, pathname, errdesc,strerror(errno));
     if (request) destroymsg(request);
     if (response) destroymsg(response);
@@ -567,12 +603,23 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char *dirna
         if (dirname) {
             if (storeFile(dirname, response->header->pathname, response->data, response->header->data_size) == -1) {
                 files_recv++;
-                verbose("< %s (%s) : there was an error storing the ejected file received: %s. File %s corrupted\n",
+                verbose("< %s: %s (%s) : there was an error storing the ejected file received: %s. File %s corrupted\n", username,
                         __func__, request->header->pathname,
                         strerror(errno), response->header->pathname);
                 continue;
             }
-        } else printf("< %s (%s):\n%s\n", __func__, response->header->pathname, (char *) response->data);
+        } else {
+            char *toPrint = malloc((response->header->data_size + 1) * sizeof(char));
+            if (toPrint == NULL){
+                files_recv++;
+                verbose("< %s: %s (%s) : there was an error printing the file received: %s. File %s skipped\n", username, __func__,
+                        request->header->pathname, strerror(errno), response->header->pathname);
+                continue;
+            }
+            memcpy(toPrint, response->data, response->header->data_size);
+            toPrint[response->header->data_size] = 0;
+            printf("< %s: %s (%s):\n%s\n", username, __func__, response->header->pathname, toPrint);
+        }
 
         files_recv++;
         if (dirname) files_stored++;
@@ -581,20 +628,26 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char *dirna
     } while (files_recv < response->header->arg);
 
 
-    files_recv
-    ? verbose("< %s (%s) completed: appended %d bytes, received %d ejected files, stored %d in %s, occupying a total of %d bytes\n",
-              __func__, pathname, size, files_recv, files_stored, dirname, bytes_stored)
-    : verbose("< %s (%s) completed: appended %d bytes. No ejected files received\n",
+    files_recv ?
+        (dirname ?
+            verbose("< %s: %s (%s) completed: appended %d bytes, received %d ejected files, stored %d in %s, occupying a total of %d bytes\n", username,
+                    __func__, pathname, size, files_recv, files_stored, dirname, bytes_stored)
+          : verbose("< %s: %s (%s) completed: appended %d bytes, received %d ejected files\n", username,
+                    __func__, pathname, size, files_recv))
+    : verbose("< %s: %s (%s) completed: appended %d bytes. No ejected files received\n", username,
               __func__, pathname, size);
     destroymsg(response);
     destroymsg(request);
     return 0;
 
     error:
-    files_recv
-    ? verbose("< %s (%s) failed: there was an error %s: %s. Received %d ejected files, stored %d in %s, occupying a total of %d bytes\n",
-              __func__, pathname, errdesc, strerror(errno), files_recv, files_stored, dirname, bytes_stored)
-    : verbose("< %s (%s) failed: there was an error %s: %s. No ejected files received\n",
+    files_recv ?
+        (dirname ?
+            verbose("< %s: %s (%s) failed: there was an error %s: %s. Received %d ejected files, stored %d in %s, occupying a total of %d bytes\n", username,
+                    __func__, pathname, errdesc, strerror(errno), files_recv, files_stored, dirname, bytes_stored)
+          : verbose("< %s: %s (%s) failed: there was an error %s: %s. Received %d ejected files\n", username,
+                    __func__, pathname, errdesc, strerror(errno), files_recv))
+    : verbose("< %s: %s (%s) failed: there was an error %s: %s. No ejected files received\n", username,
               __func__, pathname,errdesc, strerror(errno));
     if (request) destroymsg(request);
     if (response) destroymsg(response);
@@ -649,16 +702,16 @@ int lockFile(const char *pathname) {
             goto error;
         }
         if (rescode == EBUSY)
-            verbose("< %s (%s) : Unable to lock the file at the moment, another user has exclusive access. Waiting ...\n", __func__, pathname);
+            verbose("< %s: %s (%s) : Unable to lock the file at the moment, another user has exclusive access. Waiting ...\n", username, __func__, pathname);
 
     } while (rescode != EXIT_SUCCESS);
 
-    verbose("< %s (%s) completed\n", __func__, pathname);
+    verbose("< %s: %s (%s) completed\n", username, __func__, pathname);
     destroymsg(request);
     return 0;
 
     error:
-    verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    verbose("< %s: %s (%s) failed: there was an error %s: %s\n", username, __func__, pathname, errdesc, strerror(errno));
     if (request) destroymsg(request);
     if (response) destroymsg(response);
     return -1;
@@ -702,14 +755,18 @@ int unlockFile(const char *pathname) {
         strcpy(errdesc, "reading the response from server");
         goto error;
     }
+    if (response->header->code != EXIT_SUCCESS) {
+        errno = response->header->code;
+        goto error;
+    }
 
-    verbose("< %s (%s) completed\n", __func__, pathname);
+    verbose("< %s: %s (%s) completed\n", username, __func__, pathname);
     destroymsg(request);
     destroymsg(response);
     return 0;
 
     error:
-    verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    verbose("< %s: %s (%s) failed: there was an error %s: %s\n", username, __func__, pathname, errdesc, strerror(errno));
     if (request) destroymsg(request);
     if (response) destroymsg(response);
 
@@ -754,14 +811,18 @@ int closeFile(const char *pathname) {
         strcpy(errdesc, "reading the response from server");
         goto error;
     }
+    if (response->header->code != EXIT_SUCCESS) {
+        errno = response->header->code;
+        goto error;
+    }
 
-    verbose("< %s (%s) completed\n", __func__, pathname);
+    verbose("< %s: %s (%s) completed\n", username, __func__, pathname);
     destroymsg(request);
     destroymsg(response);
     return 0;
 
     error:
-    verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    verbose("< %s: %s (%s) failed: there was an error %s: %s\n", username, __func__, pathname, errdesc, strerror(errno));
     if (request) destroymsg(request);
     if (response) destroymsg(response);
 
@@ -806,14 +867,18 @@ int removeFile(const char *pathname) {
         strcpy(errdesc, "reading the response from server");
         goto error;
     }
+    if (response->header->code != EXIT_SUCCESS) {
+        errno = response->header->code;
+        goto error;
+    }
 
-    verbose("< %s (%s) completed\n", __func__, pathname);
+    verbose("< %s: %s (%s) completed\n", username, __func__, pathname);
     destroymsg(request);
     destroymsg(response);
     return 0;
 
     error:
-    verbose("< %s (%s) failed: there was an error %s: %s\n", __func__, pathname, errdesc, strerror(errno));
+    verbose("< %s: %s (%s) failed: there was an error %s: %s\n", username, __func__, pathname, errdesc, strerror(errno));
     if (request) destroymsg(request);
     if (response) destroymsg(response);
 
@@ -828,9 +893,6 @@ int storeFile(const char *dirname, char *filename, void *data, size_t data_size)
     if ((storepath = strnconcat(dirname, filename, NULL)) == NULL) return -1;
     if (mkdirs(storepath) == -1) return -1;
     if ((ptr = fopen(storepath, "w+")) == NULL) return -1;
-#if DEBUG
-    printf("errno dopo fopen %d\n", errno);
-#endif
     if (fwrite(data, 1, data_size, ptr) != data_size) {
         errno = ENOTRECOVERABLE;
         return -1;

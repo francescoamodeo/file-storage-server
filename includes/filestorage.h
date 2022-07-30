@@ -1,14 +1,8 @@
 
-
 #ifndef FILE_STORAGE_SERVER_FILESTORAGE_H
 #define FILE_STORAGE_SERVER_FILESTORAGE_H
 
-
-typedef enum open_flag {
-    O_NORMAL,
-    O_CREATE,
-    O_LOCK
-} flag ;
+#include <time.h>
 
 int openConnection(const char* sockname, int msec, struct timespec abstime);
 
@@ -31,6 +25,8 @@ int unlockFile(const char* pathname);
 int closeFile(const char* pathname);
 
 int removeFile(const char* pathname);
+
+int storeFile(const char *dirname, char *filename, void *data, size_t data_size);
 
 int verbose(const char * restrict format, ...);
 
