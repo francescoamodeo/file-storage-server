@@ -1,5 +1,7 @@
-#include "queue.h"
+#include <stdlib.h>
+#include <errno.h>
 
+#include <queue.h>
 
 /* Crea una coda */
 queue_t* init_queue() {

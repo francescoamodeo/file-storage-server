@@ -1,10 +1,6 @@
 #ifndef FILE_STORAGE_SERVER_LIST_H
 #define FILE_STORAGE_SERVER_LIST_H
 
-#include <stdlib.h>
-#include <stdio.h>
-#include <errno.h>
-
 typedef struct elem{
     struct elem* previous;
     void* data;

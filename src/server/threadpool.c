@@ -9,8 +9,9 @@
 #include <pthread.h>
 #include <unistd.h>
 #include <errno.h>
-#include "util.h"
-#include "utils/threadpool.h"
+
+#include <util.h>
+#include <threadpool.h>
 
 /**
  * @function void *threadpool_thread(void *threadpool)
@@ -33,17 +34,9 @@ static void *workerpool_thread(void *threadpool) {
 
     LOCK_RETURN(&(pool->lock), NULL);
     for (;;) {
-
-#if DEBUG
-        printf("sono un worker del tp che va a dormire\n");
-#endif
         // in attesa di un messaggio, controllo spurious wakeups.
-        while((pool->count == 0) && (!pool->exiting)) {
+        while((pool->count == 0) && (!pool->exiting))
             pthread_cond_wait(&(pool->cond), &(pool->lock));
-#if DEBUG
-            printf("mi hanno appena svegliato! pool->count: %d\n", pool->count);
-#endif
-        }
 
         if (pool->exiting > 1) break; // exit forzato, esco immediatamente
 	// devo uscire ma ci sono messaggi pendenti 
@@ -58,9 +51,7 @@ static void *workerpool_thread(void *threadpool) {
 
 	pool->taskonthefly++;
         UNLOCK_RETURN(&(pool->lock), NULL);
-#if DEBUG
-        printf("UN THREAD DEL POOL ESEGUE LA FUNZIONE con fd: %d\n", *(int*)task.arg);
-#endif
+
         // eseguo la funzione 
         (*(task.fun))(task.arg);
 	

@@ -1,5 +1,8 @@
 
-#include "list.h"
+#include <list.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <errno.h>
 
 int compare_int(void *a, void *b){
     return (*(int*)a) - (*(int*)b);
@@ -92,6 +95,7 @@ elem_t* list_gethead(list_t* list){
 
     if(!list || list->length == 0) {
         errno = EINVAL;
+        printf("OPS!!!!!!!!!!!!!!!!!\n");
         return NULL;
     }
     return list->head;
