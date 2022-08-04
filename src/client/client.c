@@ -488,12 +488,16 @@ void sendrequests() {
                 break;
             }
         }
+        if (errno == ECONNRESET) {
+            already_connected = false;
+            exit(EXIT_FAILURE);
+        }
         msleep(request_delay);
         destroyrequest(request);
     }
+    CHECK_EQ_EXIT(closeConnection(sktname), -1, "closeConnection")
     delete_queue(requests, (void (*)(void *)) destroyrequest);
     requests = NULL;
-    CHECK_EQ_EXIT(closeConnection(sktname), -1, "closeConnection")
 }
 
 int isdot(const char dir[]) {

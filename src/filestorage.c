@@ -8,9 +8,9 @@
 
 bool Verbose = false;
 bool already_connected = false;
-char *username;
+char socketname[UNIX_PATH_MAX];
 int socketfd = -1;
-char *socketname;
+char *username;
 
 int openConnection(const char *sockname, int msec, const struct timespec abstime) {
 
@@ -62,10 +62,7 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
         goto error;
     }
     already_connected = true;
-    if ((socketname = strndup(sockname, strlen(sockname))) == NULL){
-        strcpy(errdesc, "duplicating socketname");
-        goto error;
-    }
+    strncpy(socketname, sockname, UNIX_PATH_MAX);
 
     verbose("< %s: %s (%s) completed: connection with server established\n", username, __func__, sockname);
     return 0;
@@ -127,14 +124,12 @@ int closeConnection(const char *sockname) {
     already_connected = false;
 
     verbose("< %s: %s (%s) completed: connection closed successfully\n", username, __func__, sockname);
-    free(socketname);
     if (request) destroymsg(request);
     if (response) destroymsg(response);
     return 0;
 
     error:
     verbose("< %s: %s (%s) failed: there was an error %s: %s\n", username, __func__, sockname, errdesc, strerror(errno));
-    if (socketname) free(socketname);
     if (request) destroymsg(request);
     if (response) destroymsg(response);
     return -1;
@@ -590,12 +585,13 @@ int lockFile(const char *pathname) {
         goto error;
     }
 
+    if ((request = buildmsg(username, LOCK, -1, pathname, 0, NULL)) == NULL) {
+        strcpy(errdesc, "building the message to be send");
+        goto error;
+    }
+
     int rescode;
     do {
-        if ((request = buildmsg(username, LOCK, -1, pathname, 0, NULL)) == NULL) {
-            strcpy(errdesc, "building the message to be send");
-            goto error;
-        }
         if (writemsg(socketfd, request) <= 0) {
             strcpy(errdesc, "writing the request to server");
             goto error;
