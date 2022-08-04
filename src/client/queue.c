@@ -16,7 +16,7 @@ queue_t* init_queue() {
 
 
 /* Cancella una coda */
-void delete_queue(queue_t *queue) {
+void delete_queue(queue_t *queue, void (*free_func)(void*)) {
     if (queue == NULL) {
         errno = EINVAL;
         return;
@@ -25,7 +25,7 @@ void delete_queue(queue_t *queue) {
     while (queue->head != NULL) {
         tmp = queue->head;
         queue->head = queue->head->next;
-        free(tmp->data);
+        if(tmp->data) free_func(tmp->data);
         free(tmp);
     }
     free(queue);

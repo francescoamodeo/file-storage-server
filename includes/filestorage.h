@@ -26,8 +26,8 @@ int closeFile(const char* pathname);
 
 int removeFile(const char* pathname);
 
-int storeFile(const char *dirname, char *filename, void *data, size_t data_size);
-
+int readfile(const char *pathname, void **file_content, size_t *file_size);
+int storefile(const char *dirname, char *filename, void *data, size_t data_size);
 int verbose(const char * restrict format, ...);
 
 #endif //FILE_STORAGE_SERVER_FILESTORAGE_H

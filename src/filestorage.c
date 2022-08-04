@@ -13,9 +13,6 @@ int socketfd = -1;
 char *socketname;
 
 int openConnection(const char *sockname, int msec, const struct timespec abstime) {
-#if DEBUG
-    printf("verbose in filestorage: %d\n", Verbose);
-#endif
 
     char errdesc[STRERROR_LEN] = "";
 
@@ -54,7 +51,7 @@ int openConnection(const char *sockname, int msec, const struct timespec abstime
     verbose("< %s: Connecting to server ...\n", username);
     while ((connres = connect(socketfd, (struct sockaddr *) &sa, sizeof(sa)) == -1)
            && now < abstime.tv_sec) {
-        verbose("< %s: Unable to connect to server. Retry in %d msec\n", username, msec);
+        verbose("< %s: Unable to connect to server. Retrying in %d msec\n", username, msec);
 
         msleep(msec);
         time(&now);
@@ -130,12 +127,14 @@ int closeConnection(const char *sockname) {
     already_connected = false;
 
     verbose("< %s: %s (%s) completed: connection closed successfully\n", username, __func__, sockname);
+    free(socketname);
     if (request) destroymsg(request);
     if (response) destroymsg(response);
     return 0;
 
     error:
     verbose("< %s: %s (%s) failed: there was an error %s: %s\n", username, __func__, sockname, errdesc, strerror(errno));
+    if (socketname) free(socketname);
     if (request) destroymsg(request);
     if (response) destroymsg(response);
     return -1;
@@ -156,7 +155,7 @@ int openFile(const char *pathname, int flags) {
         errno = EINVAL;
         goto error;
     }
-    if (strlen(pathname) > MAX_PATH) {
+    if (strlen(pathname) >= MAX_PATH) {
         strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
@@ -167,29 +166,17 @@ int openFile(const char *pathname, int flags) {
         goto error;
     }
 
-#if DEBUG
-    printf("pathname: %s\n", pathname);
-#endif
+    //per la stampa verbose
+    char *flagstrings[4] = {"O_NORMAL", "O_CREATE", "O_LOCK", "O_CREATE|O_LOCK"};
 
     if ((request = buildmsg(username, OPEN, flags, pathname, 0, NULL)) == NULL) {
         strcpy(errdesc, "building the message to be send");
         goto error;
     }
-#if DEBUG
-    printf("username: %s\n"
-           "code: %d\n"
-           "pathname: %s\n",
-           request->header->username, request->header->code, request->header->pathname);
-#endif
     if (writemsg(socketfd, request) <= 0) {
         strcpy(errdesc, "writing the request to server");
         goto error;
     }
-#if DEBUG
-    printf("messaggio inviato\n");
-#endif
-
-
     if ((response = initmsg()) == NULL) {
         strcpy(errdesc, "initialising the response to be received");
         goto error;
@@ -203,13 +190,13 @@ int openFile(const char *pathname, int flags) {
         goto error;
     }
 
-    verbose("< %s: %s (%s) completed\n", username, __func__, pathname);
+    verbose("< %s: %s (%s) [%s] completed\n", username, __func__, pathname, flagstrings[flags]);
     destroymsg(request);
     destroymsg(response);
     return 0;
 
     error:
-    verbose("< %s: %s (%s) failed: there was an error %s: %s\n", username, __func__, pathname, errdesc, strerror(errno));
+    verbose("< %s: %s (%s) [%s] failed: there was an error %s: %s\n", username, __func__, pathname, flagstrings[flags], errdesc, strerror(errno));
     if (request) destroymsg(request);
     if (response) destroymsg(response);
     return -1;
@@ -231,7 +218,7 @@ int readFile(const char *pathname, void **buf, size_t *size) {
         errno = EINVAL;
         goto error;
     }
-    if (strlen(pathname) > MAX_PATH) {
+    if (strlen(pathname) >= MAX_PATH) {
         strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
@@ -295,15 +282,12 @@ int readNFiles(int N, const char *dirname) {
         errno = ENOTCONN;
         goto error;
     }
-    if (dirname && strlen(dirname) > MAX_PATH) {
+    if (dirname && strlen(dirname) >= MAX_PATH) {
         strcpy(errdesc, "with argument dirname");
         errno = ENAMETOOLONG;
         goto error;
     }
 
-#if DEBUG
-    printf("buildo request\n");
-#endif
     if (N <= 0) N = 0;
     if ((request = buildmsg(username, READN, N, NULL, 0, NULL)) == NULL) {
         strcpy(errdesc, "building the message to be send");
@@ -335,26 +319,14 @@ int readNFiles(int N, const char *dirname) {
         if (response->header->arg == 0) break;
 
         if (dirname) {
-            if (storeFile(dirname, response->header->pathname, response->data, response->header->data_size) == -1) {
+            if (storefile(dirname, response->header->pathname, response->data, response->header->data_size) == -1) {
                 files_recv++;
                 verbose("< %s: %s (%s) : there was an error storing the file received: %s. File %s corrupted\n", username, __func__, N,
                         strerror(errno), response->header->pathname);
                 continue;
             }
-        }
-        else {
-            char *toPrint = malloc((response->header->data_size + 1) * sizeof(char));
-            if (toPrint == NULL){
-                files_recv++;
-                verbose("< %s: %s (%s) : there was an error printing the file received: %s. File %s skipped\n", username, __func__, N,
-                        strerror(errno), response->header->pathname);
-                continue;
-            }
-            memcpy(toPrint, response->data, response->header->data_size);
-            toPrint[response->header->data_size] = 0;
-            printf("< %s: %s (%s):\n%s\n", username, __func__, response->header->pathname, toPrint);
-            free(toPrint);
-        }
+        } else verbose("< %s: %s (%s) : read %s\n", username, __func__, N, response->header->pathname);
+
 
         files_recv++;
         if (dirname) files_stored++;
@@ -364,9 +336,9 @@ int readNFiles(int N, const char *dirname) {
 
     files_recv ?
         (dirname ?
-             verbose("< %s: %s (%d) completed: received %d files, stored %d in %s, occupying a total of %ld bytes\n", username,
+             verbose("< %s: %s (%d) completed: read %d files, stored %d in %s, occupying a total of %ld bytes\n", username,
                      __func__, N,files_recv, files_stored, dirname, bytes_stored)
-           : verbose("< %s: %s (%d) completed: received %d files\n", username,
+           : verbose("< %s: %s (%d) completed: read %d files\n", username,
                      __func__, N,files_recv))
     : verbose("< %s: %s (%d) completed: read %d files: %s\n", username,__func__, N, files_stored, strerror(errno));
     destroymsg(request);
@@ -376,9 +348,9 @@ int readNFiles(int N, const char *dirname) {
     error:
     files_recv ?
         (dirname ?
-            verbose("< %s: %s (%s) failed: there was an error %s: %s. Received %d files, stored %d in %s, occupying a total of %ld bytes\n", username,
+            verbose("< %s: %s (%s) failed: there was an error %s: %s. Read %d files, stored %d in %s, occupying a total of %ld bytes\n", username,
                     __func__, N, errdesc, strerror(errno), files_recv, files_stored, dirname, bytes_stored)
-          : verbose("< %s: %s (%s) failed: there was an error %s: %s. Received %d files\n", username,
+          : verbose("< %s: %s (%s) failed: there was an error %s: %s. Read %d files\n", username,
                     __func__, N, errdesc, strerror(errno), files_recv))
     : verbose("< %s: %s (%s) failed: there was an error %s: %s. No files read\n", username, __func__, N, errdesc, strerror(errno));
     if (request) destroymsg(request);
@@ -391,6 +363,7 @@ int writeFile(const char *pathname, const char *dirname) {
     msg_t *request = NULL;
     msg_t *response = NULL;
     void *file_content = NULL;
+    size_t file_size = 0;
     int files_recv = 0;
     int files_stored = 0;
     size_t bytes_stored = 0;
@@ -404,56 +377,20 @@ int writeFile(const char *pathname, const char *dirname) {
         errno = EINVAL;
         goto error;
     }
-    if (strlen(pathname) > MAX_PATH) {
+    if (strlen(pathname) >= MAX_PATH) {
         strcpy(errdesc, "with argument patname");
         errno = ENAMETOOLONG;
         goto error;
     }
-    if (dirname && strlen(dirname) > MAX_PATH) {
+    if (dirname && strlen(dirname) >= MAX_PATH) {
         strcpy(errdesc, "with argument dirname");
         errno = ENAMETOOLONG;
         goto error;
     }
 
-    //lettura file da scrivere
-    FILE *file_stream;
-    if ((file_stream = fopen(pathname, "rb")) == NULL) {
-        strcpy(errdesc, "opening the file to be send");
-        goto error;
-    }
-    //Leggo il contenuto del file_stream lato client
-    struct stat sb;
-    if (stat(pathname, &sb) == -1) {
-        strcpy(errdesc, "gathering file attributes");
-        goto error;
-    }
-    off_t file_size = sb.st_size;
-    if (file_size == 0) {
-        if (fclose(file_stream) != 0) {
-            strcpy(errdesc, "closing the file");
-            goto error;
-        }
-        errno = ENODATA;
-        strcpy(errdesc, "reading the file to be send");
-        goto error;
-    }
-
-    file_content = malloc(file_size);
-    if (file_content == NULL) {
-        strcpy(errdesc, "allocating memory for file content");
-        goto error;
-    }
-    while (!feof(file_stream)) {
-        fread(file_content, 1, file_size, file_stream);
-        if (ferror(file_stream)) {
-            errno = ENOTRECOVERABLE;
-            strcpy(errdesc, "reading file content");
-            goto error;
-        }
-    }
-    //finito di leggere il file e chiudo lo stream
-    if (fclose(file_stream) != 0) {
-        strcpy(errdesc, "closing the file");
+    //leggo il contenuto del file prima di spedirlo al server
+    if (readfile(pathname, &file_content, &file_size) == -1){
+        strcpy(errdesc, "reading file content");
         goto error;
     }
 
@@ -483,24 +420,13 @@ int writeFile(const char *pathname, const char *dirname) {
         if (response->header->arg == 0) break;
 
         if (dirname) {
-            if (storeFile(dirname, response->header->pathname, response->data, response->header->data_size) == -1) {
+            if (storefile(dirname, response->header->pathname, response->data, response->header->data_size) == -1) {
                 files_recv++;
                 verbose("< %s: %s (%s) : there was an error storing the ejected file received: %s. File %s corrupted\n", username, __func__, request->header->pathname,
                         strerror(errno), response->header->pathname);
                 continue;
             }
-        } else {
-            char *toPrint = malloc((response->header->data_size + 1) * sizeof(char));
-            if (toPrint == NULL) {
-                files_recv++;
-                verbose("< %s: %s (%s) : there was an error printing the file received: %s. File %s skipped\n", username, __func__,
-                        request->header->pathname, strerror(errno), response->header->pathname);
-                continue;
-            }
-            memcpy(toPrint, response->data, response->header->data_size);
-            toPrint[response->header->data_size] = 0;
-            printf("< %s: %s (%s):\n%s\n", username, __func__, response->header->pathname, toPrint);
-        }
+        } else verbose("< %s: %s (%s) : received ejected %s\n", username, __func__, request->header->pathname, response->header->pathname);
 
         files_recv++;
         if (dirname) files_stored++;
@@ -563,12 +489,12 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char *dirna
         errno = EINVAL;
         goto error;
     }
-    if (strlen(pathname) > MAX_PATH) {
+    if (strlen(pathname) >= MAX_PATH) {
         strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
     }
-    if (dirname && strlen(dirname) > MAX_PATH) {
+    if (dirname && strlen(dirname) >= MAX_PATH) {
         strcpy(errdesc, "with argument dirname");
         errno = ENAMETOOLONG;
         goto error;
@@ -601,25 +527,14 @@ int appendToFile(const char *pathname, void *buf, size_t size, const char *dirna
         if (response->header->arg == 0) break;
 
         if (dirname) {
-            if (storeFile(dirname, response->header->pathname, response->data, response->header->data_size) == -1) {
+            if (storefile(dirname, response->header->pathname, response->data, response->header->data_size) == -1) {
                 files_recv++;
                 verbose("< %s: %s (%s) : there was an error storing the ejected file received: %s. File %s corrupted\n", username,
                         __func__, request->header->pathname,
                         strerror(errno), response->header->pathname);
                 continue;
             }
-        } else {
-            char *toPrint = malloc((response->header->data_size + 1) * sizeof(char));
-            if (toPrint == NULL){
-                files_recv++;
-                verbose("< %s: %s (%s) : there was an error printing the file received: %s. File %s skipped\n", username, __func__,
-                        request->header->pathname, strerror(errno), response->header->pathname);
-                continue;
-            }
-            memcpy(toPrint, response->data, response->header->data_size);
-            toPrint[response->header->data_size] = 0;
-            printf("< %s: %s (%s):\n%s\n", username, __func__, response->header->pathname, toPrint);
-        }
+        } else verbose("< %s: %s (%s) : received ejected %s\n", username, __func__, request->header->pathname, response->header->pathname);
 
         files_recv++;
         if (dirname) files_stored++;
@@ -669,7 +584,7 @@ int lockFile(const char *pathname) {
         errno = EINVAL;
         goto error;
     }
-    if (strlen(pathname) > MAX_PATH) {
+    if (strlen(pathname) >= MAX_PATH) {
         strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
@@ -732,7 +647,7 @@ int unlockFile(const char *pathname) {
         errno = EINVAL;
         goto error;
     }
-    if (strlen(pathname) > MAX_PATH) {
+    if (strlen(pathname) >= MAX_PATH) {
         strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
@@ -788,7 +703,7 @@ int closeFile(const char *pathname) {
         errno = EINVAL;
         goto error;
     }
-    if (strlen(pathname) > MAX_PATH) {
+    if (strlen(pathname) >= MAX_PATH) {
         strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
@@ -844,7 +759,7 @@ int removeFile(const char *pathname) {
         errno = EINVAL;
         goto error;
     }
-    if (strlen(pathname) > MAX_PATH) {
+    if (strlen(pathname) >= MAX_PATH) {
         strcpy(errdesc, "with argument pathname");
         errno = ENAMETOOLONG;
         goto error;
@@ -885,7 +800,48 @@ int removeFile(const char *pathname) {
     return -1;
 }
 
-int storeFile(const char *dirname, char *filename, void *data, size_t data_size) {
+int readfile(const char *pathname, void **file_content, size_t *file_size){
+
+    if (!pathname || !file_content || !file_size){
+        errno = EINVAL;
+        return -1;
+    }
+
+    //lettura file da scrivere
+    FILE *file_stream = NULL;
+    if ((file_stream = fopen(pathname, "rb")) == NULL) return -1;
+
+    //Leggo il contenuto del file_stream lato client
+    struct stat sb;
+    if (stat(pathname, &sb) == -1) return -1;
+
+    *file_size = sb.st_size;
+    if (*file_size == 0) {
+        if (fclose(file_stream) != 0) return -1;
+        errno = ENODATA;
+    }
+
+    *file_content = malloc(*file_size);
+    if (*file_content == NULL) return -1;
+
+    while (!feof(file_stream)) {
+        fread(*file_content, 1, *file_size, file_stream);
+        if (ferror(file_stream)) {
+            errno = ENOTRECOVERABLE;
+            return -1;
+        }
+    }
+    //finito di leggere il file e chiudo lo stream
+    if (fclose(file_stream) != 0) return -1;
+    return 0;
+}
+
+int storefile(const char *dirname, char *filename, void *data, size_t data_size) {
+
+    if (!dirname || !filename || !data || data_size <=0){
+        errno = EINVAL;
+        return -1;
+    }
 
     char *storepath = NULL;
     FILE *ptr = NULL;
@@ -898,6 +854,7 @@ int storeFile(const char *dirname, char *filename, void *data, size_t data_size)
         return -1;
     }
     if (fclose(ptr) != 0) return -1;
+    verbose("< %s: %s (%s) completed: stored %zu bytes in %s\n", username, __func__, filename, data_size, dirname);
 
     free(storepath);
     return 0;

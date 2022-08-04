@@ -28,8 +28,9 @@ queue_t* init_queue();
 /**
  * Cancella una coda. In caso di coda vuota non fa niente (e setta errno).
  * @param queue puntatore alla coda da cancellare.
+ * @param free_func puntatore alla funzione che dealloca il contenuto dei nodi
  */
-void delete_queue(queue_t *queue);
+void delete_queue(queue_t *queue, void (*free_func)(void*));
 
 /**
  * Inserisce un dato in fondo alla coda.
