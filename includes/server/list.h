@@ -106,7 +106,7 @@ elem_t* list_remove(list_t* list, void* value, int (*compare_function)(void*, vo
  * Funzione che dealloca la lista e ogni suo nodo.
  *
  * @param list -  puntatore alla lista da deallocare
- * @param free_content - puntatore alla funzione che dealloca il contenuto dei nodi
+ * @param free_func - puntatore alla funzione che dealloca il contenuto dei nodi
  * (setta errno)
  */
 void list_destroy(list_t *list, void (*free_func)(void*));

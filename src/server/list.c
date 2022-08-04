@@ -95,7 +95,6 @@ elem_t* list_gethead(list_t* list){
 
     if(!list || list->length == 0) {
         errno = EINVAL;
-        printf("OPS!!!!!!!!!!!!!!!!!\n");
         return NULL;
     }
     return list->head;
@@ -178,7 +177,7 @@ elem_t* list_remove(list_t* list, void* compared, int (*compare_function)(void*,
     elem_t* return_elem = NULL;
     elem_t *curr = list->head;
     while (curr != NULL) {
-        //Se la compare_function è diversa da NULL uso quella, altrimenti uso una normale uguaglianza
+        //Se la compare_function è diversa da NULL uso quella, altrimenti uso una shallow equality
         if (((compare_function != NULL) && (compare_function(curr->data, compared) == 0)) ||
             ((compare_function == NULL) && (curr->data == compared))) {
             //elemento trovato
@@ -231,7 +230,7 @@ elem_t* list_getnext(list_t* list, elem_t* elem){
 }
 
 void list_destroy(list_t *list, void (*free_func)(void*)) {
-    if(list == NULL) {
+    if(list == NULL || free_func == NULL) {
         errno = EINVAL;
         return;
     }
