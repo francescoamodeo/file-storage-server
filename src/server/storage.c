@@ -23,18 +23,12 @@ storage_t *fs_init(int max_files, size_t max_capacity, int replace_mode) {
     storage->max_files_number = 0;
     storage->max_occupied_memory = 0;
     storage->times_replacement_algorithm = 0;
-#if DEBUG
-    printf("prima di inzializzare la lock\n");
-#endif
     storage->mutex = malloc(sizeof(pthread_rwlock_t));
     if (pthread_rwlock_init(storage->mutex, NULL) != 0) {
         free(storage->mutex);
         free(storage);
         return NULL;
     }
-#if DEBUG
-    printf("lock inizializzata\n");
-#endif
     storage->filenames_queue = list_init();
     if (storage->filenames_queue == NULL) {
         fs_destroy(storage);
@@ -56,7 +50,6 @@ storage_t *fs_init(int max_files, size_t max_capacity, int replace_mode) {
     return storage;
 }
 
-//TODO prima di distruggerlo devo stampare le stats e chiudere le connessioni con i client che aspettavano lock
 void fs_destroy(storage_t *storage) {
 
     if (!storage) return;
@@ -72,6 +65,10 @@ void fs_destroy(storage_t *storage) {
     if (storage->filenames_queue != NULL) {
         list_destroy(storage->filenames_queue, free);
         storage->filenames_queue = NULL;
+    }
+    if (storage->clients_awaiting != NULL){
+        list_destroy(storage->clients_awaiting, (void (*)(void *)) destroymsg);
+        storage->clients_awaiting = NULL;
     }
     if (pthread_rwlock_unlock(storage->mutex) != 0) return;
     if (pthread_rwlock_destroy(storage->mutex) != 0) return;
@@ -96,9 +93,6 @@ int fs_openFile(storage_t *storage, char *filename, int flags, char *client) {
     char *username = NULL;
 
     if (flags & O_CREATE) {
-#if DEBUG
-        printf("creo il file\n");
-#endif
         //Se è indicato il flag O_CREATE devo verificare che il file non esista già
         //Acquisisco la mutua esclusione in scrittura per eventualmente aggiungere il file
         if (pthread_rwlock_wrlock(storage->mutex) != 0) {
@@ -139,9 +133,6 @@ int fs_openFile(storage_t *storage, char *filename, int flags, char *client) {
             returnc = ECANCELED;
             goto error;
         }
-#if DEBUG
-        printf("%s aggiunto alla lista di chi ha aperto il file\n", username);
-#endif
         //Lo aggiungo
         char *filename_key = NULL;
         if ((filename_key = strndup(filename, strlen(filename))) == NULL)
@@ -160,9 +151,6 @@ int fs_openFile(storage_t *storage, char *filename, int flags, char *client) {
             goto error;
         }
     } else {
-#if DEBUG
-        printf("apro un file già esistente\n");
-#endif
         //O_CREATE non indicato (il file dovrebbe già esistere per aprirlo)
         //Posso acquisire la mutua esclusione come lettore dato che non modifico la struttura
         if (pthread_rwlock_rdlock(storage->mutex) != 0) {
@@ -190,7 +178,7 @@ int fs_openFile(storage_t *storage, char *filename, int flags, char *client) {
         }
         //controllo che il file sia unlocked oppure il client possieda la lock sul file
         if (toOpen->client_locker != NULL && strcmp(toOpen->client_locker, client) != 0) {
-            //il file appartiene ad un altro client, non si può leggere
+            //il file appartiene ad un altro client, non si può aprire
             if (pthread_rwlock_unlock(toOpen->mutex) != 0) {
                 returnc = ENOTRECOVERABLE;
                 goto error;
@@ -225,9 +213,7 @@ int fs_openFile(storage_t *storage, char *filename, int flags, char *client) {
             returnc = ECANCELED;
             goto error;
         }
-#if DEBUG
-        printf("%s aggiunto alla lista di chi ha aperto il file\n", username);
-#endif
+        //quando arriviamo qui siamo sicuri che il client sia autorizzato ad aprire il file
         if (flags & O_LOCK && toOpen->client_locker == NULL)
             toOpen->client_locker = username;
 
@@ -358,9 +344,6 @@ int fs_readNFiles(storage_t *storage, char *client, int N, list_t *files_to_send
         goto error;
     }
 
-#if DEBUG
-    printf("devo leggere %d files, lista length: %d, primo elemento: %s\n", N, files_to_send->length, (char*)filename->data);
-#endif
     while (filename && files_to_send->length < N) {
         //Cerco il file nello storage
         file_t *file_to_copy = icl_hash_find(storage->files, filename->data);
@@ -368,19 +351,11 @@ int fs_readNFiles(storage_t *storage, char *client, int N, list_t *files_to_send
             returnc = ENOTRECOVERABLE;
             goto error;
         }
-#if DEBUG
-        printf("vado a prendere la lock sul file %s\n", file_to_copy->filename);
-#endif
         //se il file esiste ne prendo la read lock
         if (pthread_rwlock_rdlock(file_to_copy->mutex) != 0) {
             returnc = ENOTRECOVERABLE;
             goto error;
         }
-#if DEBUG
-        printf("leggo file %s\n", file_to_copy->filename);
-        printf("client: %s, locker: %s\n",client, file_to_copy->client_locker);
-#endif
-
         //Se il file è locked dal client che chiede la lettura o è libero allora posso leggerlo
         if (file_to_copy->client_locker == NULL || strcmp(file_to_copy->client_locker, client) == 0) {
             //faccio la copia del file
@@ -397,9 +372,6 @@ int fs_readNFiles(storage_t *storage, char *client, int N, list_t *files_to_send
                 returnc = ECANCELED;
                 goto error;
             }
-#if DEBUG
-            printf("copia creata\n");
-#endif
             //Aggiungo il file alla lista
             if (list_add(files_to_send, file) == NULL) {
                 //problema interno alla lista
@@ -414,23 +386,14 @@ int fs_readNFiles(storage_t *storage, char *client, int N, list_t *files_to_send
                 returnc = ECANCELED;
                 goto error;
             }
-#if DEBUG
-            printf("aggiunto alla lista, list length: %d\n", files_to_send->length);
-#endif
         }
         //Rilascio read lock
         if (pthread_rwlock_unlock(file_to_copy->mutex) != 0) {
             returnc = ENOTRECOVERABLE;
             goto error;
         }
-#if DEBUG
-        printf("unlock file %s\n", file_to_copy->filename);
-#endif
         filename = list_getnext(storage->filenames_queue, filename);
     }
-#if DEBUG
-    printf("fuori dal while\n");
-#endif
 
     //rilascio la read lock sullo storage
     if (pthread_rwlock_unlock(storage->mutex) != 0) {
@@ -501,9 +464,6 @@ int fs_writeFile(storage_t *storage, char *filename, size_t file_size, void *fil
         returnc = EFBIG;
         goto error;
     }
-#if DEBUG
-    printf("controllo che %s sia nella lista di chi ha aperto il file\n", client);
-#endif
     //Controllo che sia stato aperto dal client che ha richiesto la scrittura
     if ((list_get(toWrite->who_opened, client, (int (*)(void *, void *)) strcmp)) == NULL) {
         //il client non ha aperto il file
@@ -533,7 +493,6 @@ int fs_writeFile(storage_t *storage, char *filename, size_t file_size, void *fil
         goto error;
     }
 
-    printf("PRIMA DEL RIMPIAZZAMENTO: storage: %zu, storagefiles: %d, filesize: %zu\n", storage->occupied_memory, storage->files_number, file_size);
     //Rimpiazzamento file
     //Se aumentando di 1 il numero di file e aggiungendo la dimensione del file rimango nei limiti
     //allora non devo fare rimpiazzamenti
@@ -550,7 +509,6 @@ int fs_writeFile(storage_t *storage, char *filename, size_t file_size, void *fil
             }
             goto error;
         }
-        printf("VITTIME ELIMINATE\n");
     }
     //allochiamo lo spazio necessario per il contenuto del file
     if ((toWrite->content = malloc(file_size)) == NULL) {
@@ -559,9 +517,6 @@ int fs_writeFile(storage_t *storage, char *filename, size_t file_size, void *fil
         returnc = ENOTRECOVERABLE;
         goto error;
     }
-#if DEBUG
-    printf("prima del disastro\n");
-#endif
     //A questo punto c'è sufficiente spazio per ospitare il file e quindi lo scrivo nella cache
     memcpy(toWrite->content, file_content, file_size);
     toWrite->size = file_size;
@@ -573,9 +528,6 @@ int fs_writeFile(storage_t *storage, char *filename, size_t file_size, void *fil
         returnc = ENOTRECOVERABLE;
         goto error;
     }
-    printf("HO SCRITTO IL FILE %s\n", toWrite_filename);
-    printf("lunghezza lista: %d\n", storage->filenames_queue->length);
-    //modifico variabili dello storage
     storage->occupied_memory += file_size;
     storage->files_number++;
 
@@ -685,7 +637,6 @@ int fs_appendToFile(storage_t *storage, char *filename, size_t size, void *data,
             }
             goto error;
         }
-        printf("VITTIME ELIMINATE\n");
     }
 
     //A questo punto c'è sufficiente spazio per ospitare i nuovi dati e quindi faccio la append
@@ -1067,12 +1018,8 @@ int select_victims(int op, storage_t *storage, file_t *file, size_t file_size, l
     for ( possible_victim = list_gethead(storage->filenames_queue)
         ; (op == WRITE && curr_files_number + 1 > storage->files_limit) || (curr_occupied_memory + file_size > storage->memory_limit)
         ; possible_victim = list_getnext(storage->filenames_queue, possible_victim) ) {
-#if DEBUG
-        printf("cerco vittime\n");
-#endif
 
         if (possible_victim == NULL) {
-            printf("VITTIMA NULL!!!\n");
             //se siamo arrivati qui avevamo bisogno di liberare spazio, ma non abbiamo file da espellere -> inconsistenza
             return ENOTRECOVERABLE;
         }
@@ -1101,7 +1048,6 @@ int select_victims(int op, storage_t *storage, file_t *file, size_t file_size, l
         curr_occupied_memory -= toEject_copy->size;
     }
     possible_victim = NULL;
-    printf("VITTIME SELEZIONATE, list length: %d\n", filesEjected->length);
     return EXIT_SUCCESS;
 }
 
@@ -1112,9 +1058,6 @@ int eject_victims(storage_t *storage, list_t *filesEjected){
     elem_t *toEject_file_elem = list_gethead(filesEjected);
     elem_t *victim = NULL;
     while (toEject_file_elem != NULL) {
-#if DEBUG
-        printf("cancello vittime\n");
-#endif
 
         file_t *toEject_file = (file_t *) toEject_file_elem->data;
         victim = list_remove(storage->filenames_queue, toEject_file->filename, (int (*)(void *, void *)) strcmp);
