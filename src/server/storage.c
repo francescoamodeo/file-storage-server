@@ -726,7 +726,7 @@ int fs_lockFile(storage_t *storage, char *filename, char *client) {
         returnc = ENOTRECOVERABLE;
         goto error;
     }
-    
+
     return EXIT_SUCCESS;
 
     error:
@@ -749,7 +749,7 @@ int fs_unlockFile(storage_t *storage, char *filename, char *client) {
     }
     //il file non esiste
     if ((toUnlock = icl_hash_find(storage->files, (void *) filename)) == NULL) {
-        if (pthread_rwlock_rdlock(storage->mutex) != 0) {
+        if (pthread_rwlock_unlock(storage->mutex) != 0) {
             returnc = ENOTRECOVERABLE;
             goto error;
         }
@@ -997,11 +997,11 @@ void fs_stats(storage_t *storage) {
     if (!storage)
         return;
 
-    printf("\nFile Storage Stats:\n");
-    printf("    - MAX FILES REACHED: %d\n", storage->max_files_number);
-    printf("    - MAX OCCUPIED CAPACITY REACHED: %f MB\n", ((double) storage->max_occupied_memory) / 1000000);
-    printf("    - REPLACEMENT ALGORITM EXECUTED: %d TIMES\n", storage->times_replacement_algorithm);
-    printf("    - FILES CURRENTLY STORED: %d\n", storage->files_number);
+    printf("File Storage Stats:\n");
+    printf("    MAX FILES REACHED: %d\n", storage->max_files_number);
+    printf("    MAX OCCUPIED CAPACITY REACHED: %f MB\n", ((double) storage->max_occupied_memory) / 1000000);
+    printf("    REPLACEMENT ALGORITM EXECUTED: %d TIMES\n", storage->times_replacement_algorithm);
+    printf("    FILES CURRENTLY STORED: %d\n", storage->files_number);
     list_tostring(storage->filenames_queue);
 }
 
