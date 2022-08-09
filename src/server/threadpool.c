@@ -60,7 +60,7 @@ static void *workerpool_thread(void *threadpool) {
     }
     UNLOCK_RETURN(&(pool->lock), NULL);
 
-    fprintf(stderr, "thread %d exiting\n", myid);
+    //fprintf(stderr, "thread %d exiting\n", myid);
     return NULL;
 }
 
@@ -182,14 +182,8 @@ int addToThreadPool(threadpool_t *pool, void (*f)(void *), void *arg) {
 	}
     }
 
-#if DEBUG
-    printf("fd nella addtp: %d\n", *(int*)arg);
-#endif
     pool->pending_queue[pool->tail].fun = f;
     pool->pending_queue[pool->tail].arg = arg;
-#if DEBUG
-    printf("dopo aver inserito nella code del pool: fd = %d\n", *(int*)pool->pending_queue[pool->tail].arg);
-#endif
     pool->count++;    
     pool->tail++;
     if (pool->tail >= queue_size) pool->tail = 0;
