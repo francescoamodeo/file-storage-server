@@ -1,24 +1,22 @@
 #if !defined(CONN_H)
 #define CONN_H
 
-#include <sys/types.h> 
-#include <sys/socket.h>
-#include <sys/uio.h>
-#include <sys/un.h>
 #include <unistd.h>
-#include <errno.h>
 #include <stdio.h>
-#include <stdlib.h>
+#include <errno.h>
 
 #if !defined(BUFSIZE)
 #define BUFSIZE 256
 #endif
 #if !defined(MAXBACKLOG)
-#define MAXBACKLOG   32
+#define MAXBACKLOG 32
 #endif
+#if !defined(CONN_TIMEOUT_SEC)
 #define CONN_TIMEOUT_SEC 10
+#endif
+#if !defined(RETRY_CONN_MSEC)
 #define RETRY_CONN_MSEC 3000
-#define MAX_CONSECUTIVE_REQUESTS 10
+#endif
 
 /** Evita letture parziali
  *
@@ -29,17 +27,17 @@
 static inline int readn(long fd, void *buf, size_t size) {
     size_t left = size;
     int r;
-    char *bufptr = (char*)buf;
-    while(left>0) {
-	if ((r=read((int)fd ,bufptr,left)) == -1) {
-	    if (errno == EINTR) continue;
-	    return -1;
-	}
-	if (r == 0) return 0;   // EOF
-        left    -= r;
-	bufptr  += r;
+    unsigned char *bufptr = buf;
+    while (left > 0) {
+        if ((r = (int) read((int) fd, bufptr, left)) == -1) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (r == 0) return 0;   // EOF
+        left -= r;
+        bufptr += r;
     }
-    return size;
+    return (int) size;
 }
 
 /** Evita scritture parziali
@@ -51,18 +49,17 @@ static inline int readn(long fd, void *buf, size_t size) {
 static inline int writen(long fd, void *buf, size_t size) {
     size_t left = size;
     int r;
-    char *bufptr = (char*)buf;
-    while(left>0) {
-	if ((r=write((int)fd ,bufptr,left)) == -1) {
-	    if (errno == EINTR) continue;
-	    return -1;
-	}
-	if (r == 0) return 0;  
-        left    -= r;
-	bufptr  += r;
+    unsigned char *bufptr = buf;
+    while (left > 0) {
+        if ((r = (int) write((int) fd, bufptr, left)) == -1) {
+            if (errno == EINTR) continue;
+            return -1;
+        }
+        if (r == 0) return 0;
+        left -= r;
+        bufptr += r;
     }
     return 1;
 }
-
 
 #endif /* CONN_H */

@@ -1,116 +1,63 @@
 #if !defined(_UTIL_H)
 #define _UTIL_H
 
-
 #include <stdarg.h>
-#include <sys/types.h>
 #include <sys/stat.h>
-#include <fcntl.h>
-#include <unistd.h>
-#include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
 #include <pthread.h>
 #include <errno.h>
 #include <stdbool.h>
-#include <assert.h>
 
-#if !defined(BUFSIZE)
-#define BUFSIZE 256
-#endif
-
-#if !defined(EXTRA_LEN_PRINT_ERROR)
-#define EXTRA_LEN_PRINT_ERROR   512
-#endif
-
-
+#if !defined(UNIX_PATH_MAX)
 #define UNIX_PATH_MAX 108
-#define MAX_FILE_NAME 128
-#define MAX_PATH 2048
-
-#define SYSCALL_EXIT(name, r, sc, str, ...)	\
-    if ((r=sc) == -1) {				\
-	perror(#name);				\
-	int errno_copy = errno;			\
-	print_error(str, __VA_ARGS__);		\
-	exit(errno_copy);			\
-    }
-
-#define SYSCALL_PRINT(name, r, sc, str, ...)	\
-    if ((r=sc) == -1) {				\
-	perror(#name);				\
-	int errno_copy = errno;			\
-	print_error(str, __VA_ARGS__);		\
-	errno = errno_copy;			\
-    }
-
-#define SYSCALL_RETURN(name, r, sc, str, ...)	\
-    if ((r=sc) == -1) {				\
-	perror(#name);				\
-	int errno_copy = errno;			\
-	print_error(str, __VA_ARGS__);		\
-	errno = errno_copy;			\
-	return r;                               \
-    }
+#endif
+#if !defined(MAX_PATH)
+#define MAX_PATH 2048 //compreso null terminator
+#endif
+#if !defined(MAX_USERNAME)
+#define MAX_USERNAME 32
+#endif
+#if !defined(STRERROR_LEN)
+#define STRERROR_LEN 4096
+#endif
 
 #define PRINT_PERROR(str)  \
     {   \
-        fprintf(stderr,"ERROR: %s:%d: in function %s: ", __FILE__, __LINE__, __func__); \
+        fprintf(stderr,"< ERROR [%lu]: %s:%d: in function %s: ", pthread_self(), __FILE__, __LINE__, __func__); \
         perror(str);                   \
         fflush(stderr); \
     }
 
 #define PRINT_ERROR(str)  \
     {   \
-        fprintf(stderr,"ERROR: %s:%d: in function %s: %s\n", __FILE__, __LINE__, __func__, str); \
+        fprintf(stderr,"< ERROR [%lu]: %s:%d: in function %s: %s\n", pthread_self(), __FILE__, __LINE__, __func__, str); \
         fflush(stderr); \
-    }
-
-#define CHECK_ERROR_EXIT(X, val)    \
-   if ((X)==val) {				    \
-	    int errno_copy = errno;     \
-        if(errno_copy == 0)         \
-            exit(EXIT_FAILURE);     \
-        else                        \
-            exit(errno_copy);       \
     }
 
 #define CHECK_EQ_EXIT( X, val, str)	\
     if ((X)==val) {				    \
-	    int errno_copy = errno;     \
-        if(errno_copy == 0) {       \
-            PRINT_ERROR(str)        \
-            exit(EXIT_FAILURE);     \
-        }                           \
-        else {                      \
-            PRINT_PERROR(str)       \
-            exit(errno_copy);       \
-        }                           \
+        if(errno == 0) PRINT_ERROR(str)  \
+        else PRINT_PERROR(str)       \
+        exit(EXIT_FAILURE);          \
     }
 
-// prototipo necessario solo se compiliamo con c99 o c11
+#define CHECK_NEQ_EXIT( X, val, str)	\
+    if ((X)!=val) {				    \
+        if(errno == 0) PRINT_ERROR(str)  \
+        else PRINT_PERROR(str)       \
+        exit(EXIT_FAILURE);          \
+    }
+
+#define SYSCALL_EXIT(r, sc, str)\
+    if ((r=sc) == -1) {			\
+	    PRINT_PERROR(str);		\
+	    exit(EXIT_FAILURE);     \
+    }
+
+// prototipi necessari solo se compiliamo con c99 o c11
 char *strndup(const char *s, size_t n);
-
-/**
- * \brief Procedura di utilita' per la stampa degli errori
- *
- */
-static inline void print_error(const char * str, ...) {
-    const char err[]="ERROR: ";
-    va_list argp;
-    char * p=(char *)malloc(strlen(str)+strlen(err)+EXTRA_LEN_PRINT_ERROR);
-    if (!p) {
-        perror("malloc");
-        fprintf(stderr,"FATAL ERROR nella funzione 'print_error'\n");
-        return;
-    }
-    strcpy(p,err);
-    strcpy(p+strlen(err), str);
-    va_start(argp, str);
-    vfprintf(stderr, p, argp);
-    va_end(argp);
-    free(p);
-}
+char *realpath(const char *path, char *resolved_path);
 
 /** 
  * \brief Controlla se la stringa passata come primo argomento e' un numero.
@@ -130,8 +77,92 @@ static inline int isNumber(const char* s, long* n) {
   return 1;   // non e' un numero
 }
 
+static inline char* strconcat(const char *s1, const char *s2) {
+    if(s1==NULL && s2 != NULL) {
+        errno = EINVAL;
+        return NULL;
+    }
+    size_t len = strlen(s1) + strlen(s2) + 1;
+    if (len > MAX_PATH){
+        errno = ENAMETOOLONG;
+        return NULL;
+    }
+
+    char *dest = calloc(len, sizeof(char));
+    if(dest == NULL)
+        return NULL;
+
+    strncpy(dest, s1, strlen(s1));
+    dest[strlen(s1)]='\0';
+
+    return strncat(dest, s2, strlen(s2));
+}
+
+static inline char* strnconcat(const char* s1, ...){
+    char* result;
+    size_t len = strlen(s1);
+    if (len >= MAX_PATH){
+        errno = ENAMETOOLONG;
+        return NULL;
+    }
+    result = strndup(s1, len);
+    if (result == NULL) return NULL;
+    va_list ap;
+    va_start(ap,s1);
+    char* s=NULL;
+
+    //l'ultimo argomento passato sarà NULL per dire che la lista è terminata
+    while ((s = va_arg(ap, char*))!=NULL) {
+        char* temp = strconcat(result, s);
+        if(temp == NULL){
+            free(result);
+            return NULL;
+        }
+        free(result);
+        result=temp;
+    }
+
+    va_end(ap);
+    return result;
+}
+
+static inline int mkdirs(char *file_path) {
+    if (file_path == NULL){
+        errno = EINVAL;
+        return -1;
+    }
+    char *dir_path = (char *) malloc(strlen(file_path) + 1);
+    if (dir_path == NULL) return -1;
+
+    char *next_sep = strchr(file_path, '/');
+    if(next_sep - file_path == 0) //path assoluto
+        next_sep = strchr(next_sep + 1, '/');
+    while (next_sep != NULL) {
+        long dir_path_len = next_sep - file_path;
+        memcpy(dir_path, file_path, dir_path_len);
+        dir_path[dir_path_len] = '\0';
+
+        if (mkdir(dir_path, S_IRWXU) == -1 && errno != EEXIST) return -1;
+
+        next_sep = strchr(next_sep + 1, '/');
+    }
+    free(dir_path);
+    if (errno == EEXIST) errno = 0;
+    return 0;
+}
+
+static inline bool checkfile_ext(char *filename, char *extension) {
+
+    const char *dot = strrchr(filename, '.');
+    if(!dot || dot == filename)
+        return false;
+    if(strcmp(dot+1, extension) != 0)
+        return false;
+    return true;
+}
+
 /* msleep(): Sleep for the requested number of milliseconds. */
-int msleep(long msec) {
+static inline int msleep(long msec) {
     struct timespec ts;
     int res;
 
@@ -148,6 +179,20 @@ int msleep(long msec) {
     } while (res && errno == EINTR);
 
     return res;
+}
+
+static inline int max(int cnt,...) {
+    va_list ap;
+    int i, current, maximum;
+    va_start(ap, cnt);
+    maximum = 0;
+    for (i = 0; i < cnt; i++) {
+        current = va_arg(ap, int);
+        if (current > maximum)
+            maximum = current;
+    }
+    va_end(ap);
+    return maximum;
 }
 
 #define TRUNC_NEWLINE(str) \
@@ -177,14 +222,15 @@ int msleep(long msec) {
         }                         \
     }
 
+    //usate dal threadpool
 #define LOCK(l)      if (pthread_mutex_lock(l)!=0)        { \
     fprintf(stderr, "ERRORE FATALE lock\n");		    \
     pthread_exit((void*)EXIT_FAILURE);			    \
-  }   
+  }
 #define LOCK_RETURN(l, r)  if (pthread_mutex_lock(l)!=0)        {	\
     fprintf(stderr, "ERRORE FATALE lock\n");				\
     return r;								\
-  }   
+  }
 
 #define UNLOCK(l)    if (pthread_mutex_unlock(l)!=0)      {	    \
     fprintf(stderr, "ERRORE FATALE unlock\n");			    \
@@ -194,33 +240,5 @@ int msleep(long msec) {
     fprintf(stderr, "ERRORE FATALE unlock\n");				\
     return r;								\
   }
-#define WAIT(c,l)    if (pthread_cond_wait(c,l)!=0)       {	    \
-    fprintf(stderr, "ERRORE FATALE wait\n");			    \
-    pthread_exit((void*)EXIT_FAILURE);				    \
-  }
-/* ATTENZIONE: t e' un tempo assoluto! */
-#define TWAIT(c,l,t) {							\
-    int r=0;								\
-    if ((r=pthread_cond_timedwait(c,l,t))!=0 && r!=ETIMEDOUT) {		\
-      fprintf(stderr, "ERRORE FATALE timed wait\n");			\
-      pthread_exit((void*)EXIT_FAILURE);				\
-    }									\
-  }
-#define SIGNAL(c)    if (pthread_cond_signal(c)!=0)       {		\
-    fprintf(stderr, "ERRORE FATALE signal\n");				\
-    pthread_exit((void*)EXIT_FAILURE);					\
-  }
-#define BCAST(c)     if (pthread_cond_broadcast(c)!=0)    {		\
-    fprintf(stderr, "ERRORE FATALE broadcast\n");			\
-    pthread_exit((void*)EXIT_FAILURE);					\
-  }
-static inline int TRYLOCK(pthread_mutex_t* l) {
-  int r=0;		
-  if ((r=pthread_mutex_trylock(l))!=0 && r!=EBUSY) {		    
-    fprintf(stderr, "ERRORE FATALE unlock\n");		    
-    pthread_exit((void*)EXIT_FAILURE);			    
-  }								    
-  return r;	
-}
 
 #endif /* _UTIL_H */

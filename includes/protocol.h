@@ -1,8 +1,8 @@
 #ifndef FILE_STORAGE_SERVER_PROTOCOL_H
 #define FILE_STORAGE_SERVER_PROTOCOL_H
 
-#include "conn.h"
-#include "util.h"
+#include <conn.h>
+#include <util.h>
 
 typedef struct header {
     char pathname[MAX_PATH];
@@ -30,6 +30,12 @@ typedef enum request_code {
     FIN
 } request_c;
 
+typedef enum open_flag {
+    O_NORMAL,
+    O_CREATE,
+    O_LOCK
+} flag ;
+
 static inline int writemsg(int to, msg_t* message) {
     if (to < 0 || !message) {
         errno = EINVAL;
@@ -39,15 +45,9 @@ static inline int writemsg(int to, msg_t* message) {
     int wres;
     if ((wres = writen(to, message->header, sizeof(msg_header))) == -1) return -1;
     if (message->header->data_size > 0) {
-#if DEBUG
-        printf("scrivo data\n");
-#endif
         if ((wres = writen(to, message->data, message->header->data_size)) == -1) return -1;
     }
 
-#if DEBUG
-    printf("messaggio inviato (res: %d)\n", wres);
-#endif
     return wres;
 }
 
@@ -57,26 +57,10 @@ static inline int readmsg(int from, msg_t *message) {
         return -1;
     }
 
-#if DEBUG
-    printf("leggo il messaggio\n");
-#endif
-
     int read = 0;
     if ((read += readn(from, message->header, sizeof(msg_header))) == -1) return -1;
-#if DEBUG
-    printf("letto header %d\n", read);
-    printf("code: %d\n"
-           "flags: %d\n"
-           "filepath: %s\n"
-           "data size: %ld\n",
-           message->header->code, message->header->arg, message->header->pathname, message->header->data_size);
-#endif
     message->data = NULL;
     if (message->header->data_size > 0) {
-#if DEBUG
-        printf("data size >0 = %ld\n", message->header->data_size);
-        printf("code readmsg (data)= %d\n", message->header->code);
-#endif
         message->data = malloc(message->header->data_size);
         if (!message->data) return -1;
         if ((read += readn(from, message->data, message->header->data_size)) == -1) {
@@ -84,9 +68,6 @@ static inline int readmsg(int from, msg_t *message) {
             return -1;
         }
     }
-#if DEBUG
-    printf("totale messaggio letto %d\n", read);
-#endif
     return read;
 }
 
@@ -118,9 +99,6 @@ static inline msg_t *buildmsg(char *username, int code, int arg, const char *pat
     message->header->arg = arg;
     message->header->data_size = data_size;
     if (data_size > 0) {
-#if DEBUG
-        printf("imposto data, data size (build message): %ld\n", data_size);
-#endif
         message->data = malloc(data_size);
         if (!message->data) return NULL;
         memcpy(message->data, data, data_size);
@@ -145,10 +123,6 @@ static inline msg_t* initmsg() {
 }
 
 static inline void destroymsg(msg_t *message) {
-#if DEBUG
-    printf("distruggo il messaggio %d: %s\n", message->header->code, message->header->pathname);
-    fflush(stdout);
-#endif
     free(message->header);
     if (message->data) free(message->data);
     free(message);
