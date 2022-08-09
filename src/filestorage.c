@@ -335,7 +335,7 @@ int readNFiles(int N, const char *dirname) {
                      __func__, N,files_recv, files_stored, dirname, bytes_stored)
            : verbose("< %s: %s (%d) completed: read %d files\n", username,
                      __func__, N,files_recv))
-    : verbose("< %s: %s (%d) completed: read %d files: %s\n", username,__func__, N, files_stored, strerror(errno));
+    : verbose("< %s: %s (%d) completed: No files read\n", username,__func__, N);
     destroymsg(request);
     destroymsg(response);
     return dirname ? files_stored : files_recv;
@@ -815,11 +815,13 @@ int readfile(const char *pathname, void **file_content, size_t *file_size){
     if (*file_size == 0) {
         if (fclose(file_stream) != 0) return -1;
         errno = ENODATA;
+        return -1;
     }
 
     *file_content = malloc(*file_size);
     if (*file_content == NULL) return -1;
 
+    verbose("< %s: Reading %zu bytes of %s from local ...\n", username, *file_size, pathname);
     while (!feof(file_stream)) {
         fread(*file_content, 1, *file_size, file_stream);
         if (ferror(file_stream)) {
@@ -842,6 +844,7 @@ int storefile(const char *dirname, char *filename, void *data, size_t data_size)
     char *storepath = NULL;
     FILE *ptr = NULL;
 
+    verbose("< %s: Storing %s, occupying %d bytes, in %s ...\n", username, filename, data_size, dirname);
     if ((storepath = strnconcat(dirname, filename, NULL)) == NULL) return -1;
     if (mkdirs(storepath) == -1) return -1;
     if ((ptr = fopen(storepath, "w+")) == NULL) return -1;
@@ -850,7 +853,6 @@ int storefile(const char *dirname, char *filename, void *data, size_t data_size)
         return -1;
     }
     if (fclose(ptr) != 0) return -1;
-    verbose("< %s: %s (%s) completed: stored %zu bytes in %s\n", username, __func__, filename, data_size, dirname);
 
     free(storepath);
     return 0;

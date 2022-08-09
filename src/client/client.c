@@ -373,7 +373,7 @@ void sendrequests() {
                 time(&abstime.tv_sec);
                 abstime.tv_sec += CONN_TIMEOUT_SEC;
 
-                CHECK_EQ_EXIT(openConnection(sktname, RETRY_CONN_MSEC, abstime), -1, "openConnection")
+                if (openConnection(sktname, RETRY_CONN_MSEC, abstime) == -1) exit(EXIT_FAILURE);
                 break;
             }
             case 'w': {
@@ -386,23 +386,15 @@ void sendrequests() {
                 }
                 if (openFile(abspath, O_CREATE | O_LOCK) == -1){
                     if (errno == EEXIST) { // se il file esiste già possiamo scriverlo solamente in append
-                        if (openFile(abspath, O_NORMAL) == -1) {
-                            PRINT_PERROR("openFile")
-                            break;
-                        }
+                        if (openFile(abspath, O_NORMAL) == -1) break;
                         void *buf = NULL;
                         size_t file_size = 0;
-                        if (readfile(abspath, &buf, &file_size) == -1){
-                            PRINT_PERROR("readfile content")
-                            break;
-                        }
+                        if (readfile(abspath, &buf, &file_size) == -1) break;
                         if (appendToFile(abspath, buf, file_size, storedir) == -1){
-                            PRINT_PERROR("appendToFile")
                             free(buf);
                             break;
                         }
                         if (closeFile(abspath) == -1) {
-                            PRINT_PERROR("closeFile")
                             free(buf);
                             break;
                         }
@@ -410,36 +402,22 @@ void sendrequests() {
                     }
                     break;
                 }
-                if (writeFile(abspath, storedir) == -1){
-                    PRINT_PERROR("writeFile")
-                    break;
-                }
-                if (closeFile(abspath) == -1) {
-                    PRINT_PERROR("closeFile")
-                    break;
-                }
+                if (writeFile(abspath, storedir) == -1) break;
+                if (closeFile(abspath) == -1) break;
                 break;
             }
             case 'r': {
                 char *file = strtok_r(request->arg, ",", &tmpstr);  //file da leggere
                 void *buf = NULL;
                 size_t bufsize = 0;
-                if (openFile(file, O_NORMAL) == -1) {
-                    PRINT_PERROR("openFile")
-                    break;
-                }
-                if (readFile(file, &buf, &bufsize) == -1){
-                    PRINT_PERROR("readFile")
-                    break;
-                }
+                if (openFile(file, O_NORMAL) == -1) break;
+                if (readFile(file, &buf, &bufsize) == -1) break;
                 if (closeFile(file) == -1) {
-                    PRINT_PERROR("closeFile")
                     free(buf);
                     break;
                 }
                 char *storedir = strtok_r(NULL, ",", &tmpstr); //directory d
                 if (storedir && storefile(storedir, file, buf, bufsize) == -1) {
-                    PRINT_PERROR("storefile")
                     free(buf);
                     break;
                 }
@@ -457,34 +435,22 @@ void sendrequests() {
                     assert(e != NULL && *e == (char) 0);
                 }
                 char *storedir = strtok_r(NULL, ",", &tmpstr); //directory d
-                if (readNFiles((int)n, storedir) == -1) {
-                    PRINT_PERROR("readNFiles")
-                    break;
-                }
+                if (readNFiles((int)n, storedir) == -1) break;
                 break;
             }
             case 'l': {
                 char *file = strtok_r(request->arg, ",", &tmpstr);  //file da lockare
-                if (lockFile(file) == -1) {
-                    PRINT_PERROR("lockFile")
-                    break;
-                }
+                if (lockFile(file) == -1) break;
                 break;
             }
             case 'u': {
                 char *file = strtok_r(request->arg, ",", &tmpstr);  //file da unlockare
-                if (unlockFile(file) == -1) {
-                    PRINT_PERROR("unlockFile")
-                    break;
-                }
+                if (unlockFile(file) == -1) break;
                 break;
             }
             case 'c': {
                 char *file = strtok_r(request->arg, ",", &tmpstr);  //file da cancellare
-                if (removeFile(file) == -1) {
-                    PRINT_PERROR("removeFile")
-                    break;
-                }
+                if (removeFile(file) == -1) break;
                 break;
             }
         }
@@ -495,7 +461,7 @@ void sendrequests() {
         msleep(request_delay);
         destroyrequest(request);
     }
-    CHECK_EQ_EXIT(closeConnection(sktname), -1, "closeConnection")
+    if (closeConnection(sktname) == -1) exit(EXIT_FAILURE);
     delete_queue(requests, (void (*)(void *)) destroyrequest);
     requests = NULL;
 }
@@ -547,8 +513,8 @@ queue_t* lsR(const char nomedir[], queue_t *files, int *n) {
 
 void printcommands(char **args){
     printf(
-    "Usage: %s -f <socketfile> [OPTIONS]\n"
-    "-h                     Prints help header.\n"
+    "Usage: %s -a <username> -f <socketfile> [OPTIONS]\n"
+    "-h                     Prints help message.\n"
     "-f <sockefile>         Specifies the connections socket.\n"
     "-w <dirname>[,n=0]     Requests a write for all files inside dirname. If dirname contains other subdirectories,\n"
     "                       these are recursively visited and no more than n files are written.\n"
