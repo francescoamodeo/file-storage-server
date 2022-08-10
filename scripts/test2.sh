@@ -12,15 +12,17 @@ echo -e "< Starting server..."
 SERVER_PID=$!
 export SERVER_PID
 
+sleep 2
+
 echo -e "< Starting clients..."
 echo ""
 
-"$BASEDIR"/bin/client -a client1 -p -f "$SOCKET" -w "$SENDDIR",3
+"$BASEDIR"/bin/client -a client1 -p -f "$SOCKET" -w "$SENDDIR"
 
 sleep 1
 
-#dovrebbe espellere il file0
-"$BASEDIR"/bin/client -a client2 -p -f "$SOCKET" -W "$SENDDIR"/trigger -D "$EJECTDIR"
+#dovrebbe espellere il file2
+"$BASEDIR"/bin/client -a client2 -p -f "$SOCKET" -W "$BASEDIR"/tests/test2/trigger -D "$EJECTDIR"
 
 
 echo ""

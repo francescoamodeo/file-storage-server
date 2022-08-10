@@ -12,10 +12,11 @@ valgrind --leak-check=full "$BASEDIR"/bin/server -f "$BASEDIR"/tests/test1/confi
 SERVER_PID=$!
 export SERVER_PID
 
+sleep 2
+
 echo -e "< Starting clients..."
 echo ""
 "$BASEDIR"/bin/client -a client1 -f "$SOCKET" -h
-"$BASEDIR"/bin/client -a client1 -f "$SOCKET" -p -t200
 # Scrittura di file
 "$BASEDIR"/bin/client -a client1 -f "$SOCKET" -p -t200 -W "$SENDDIR"/file7,"$SENDDIR"/file8 -D "$EJECTDIR"
 # Scritture e letture dallo stesso client

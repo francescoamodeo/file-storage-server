@@ -23,11 +23,17 @@ done
 # Aspetto 30 secondi
 echo "< Test started. Wait 30 seconds for the result"
 sleep 30
+echo ""
 echo -e "< Terminating server with SIGINT"
+echo ""
 kill -s SIGINT ${SERVER_PID}
 
+sleep 1
+
 # stop processi
+echo ""
 echo -e "< Terminating clients with SIGKILL"
+echo ""
 for i in "${array_id[@]}"; do
 	kill -9 "${i}"
   wait "${i}"
@@ -37,6 +43,5 @@ echo ""
 
 wait ${SERVER_PID}
 
-echo ""
 echo -e "< TEST 3 COMPLETED"
 echo ""
