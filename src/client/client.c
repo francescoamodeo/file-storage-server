@@ -82,7 +82,7 @@ int main(int argc, char* argv[]) {
                     printf("< Client already connected. Cannot repeat -%c option multiple times\n", opt);
                     exit(EXIT_FAILURE);
                 }
-                if (!checkfile_ext(optarg, "sk")){
+                if (!checkfile_ext(optarg, "sk")) {
                     printf("< Invalid argument for -f option. %s is not a valid socket file\n", optarg);
                     exit(EXIT_FAILURE);
                 }
@@ -97,7 +97,8 @@ int main(int argc, char* argv[]) {
                 CHECK_EQ_EXIT(request->arg = strndup(optarg, strlen(optarg)), NULL, "strndup")
                 //l'operzione di connessione ha la precedenza rispetto alle altre richieste in coda
                 CHECK_EQ_EXIT(pushfirst(requests, (void *) request), 1, "pushfirst queue")
-                
+                request = NULL; //per evitare dangling pointer
+
                 optf_requested = true;
                 break;
             }
@@ -126,7 +127,7 @@ int main(int argc, char* argv[]) {
                 }
                 //se n non è stato indicato nell'opzione -w (oppure n = 0) lo settiamo al massimo valore possibile
                 //in questo modo non c'è limite al numero di file per cui fare la write
-                if(n == 0) n = INT_MAX;
+                if (n == 0) n = INT_MAX;
 
                 //controllo se è indicata l'opzione congiunta -D
                 optD_requested = false;
@@ -149,7 +150,7 @@ int main(int argc, char* argv[]) {
                 }
                 //esploro ricorsivamente la dir per trovare tutti i file per cui dovrò richiedere una write
                 CHECK_EQ_EXIT(wfiles = init_queue(), NULL, "files queue init")
-                CHECK_EQ_EXIT(wfiles = lsR(dirname, wfiles, (int*) &n), NULL, "lsR")
+                CHECK_EQ_EXIT(wfiles = lsR(dirname, wfiles, (int *) &n), NULL, "lsR")
                 free(dirname);
                 size_t filecount = wfiles->length;
                 //inserisco tutte le richieste effettive in coda che verranno gestite una ad una dalla sendrequest()
@@ -169,6 +170,7 @@ int main(int argc, char* argv[]) {
                 }
                 delete_queue(wfiles, free);
                 wfiles = NULL;
+                request = NULL;
                 break;
             }
             case 'W': {
@@ -204,6 +206,7 @@ int main(int argc, char* argv[]) {
 
                     CHECK_EQ_EXIT(push(requests, (void *) request), 1, "push request")
                 } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
+                request = NULL;
                 break;
             }
             case 'D': {
@@ -242,6 +245,7 @@ int main(int argc, char* argv[]) {
 
                     CHECK_EQ_EXIT(push(requests, (void *) request), 1, "push request")
                 } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
+                request = NULL;
                 break;
             }
             case 'R': {
@@ -284,13 +288,14 @@ int main(int argc, char* argv[]) {
                 } else CHECK_EQ_EXIT(request->arg = strndup(nstr, strlen(nstr)), NULL, "strndup")
 
                 CHECK_EQ_EXIT(push(requests, (void *) request), 1, "push request")
+                request = NULL;
                 break;
             }
             case 'd': {
                 printf("< -d option requires to be used jointly with -r or -R options\n");
                 exit(EXIT_FAILURE);
             }
-            case 't':{
+            case 't': {
                 long n = 0;
                 if (optarg) //parametro opzionale time presente
                     if (isNumber(optarg, &n) != 0 || n < 0) {
@@ -300,7 +305,7 @@ int main(int argc, char* argv[]) {
                         exit(EXIT_FAILURE);
                     }
 
-                request_delay = (int)n;
+                request_delay = (int) n;
                 break;
             }
             case 'l': {
@@ -312,6 +317,7 @@ int main(int argc, char* argv[]) {
                     CHECK_EQ_EXIT(push(requests, (void *) request), 1, "push request")
 
                 } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
+                request = NULL;
                 break;
             }
             case 'u': {
@@ -321,8 +327,9 @@ int main(int argc, char* argv[]) {
                     request->opt = opt;
                     CHECK_EQ_EXIT(request->arg = strndup(tok, strlen(tok)), NULL, "strndup")
                     CHECK_EQ_EXIT(push(requests, (void *) request), 1, "push request")
-                    
+
                 } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
+                request = NULL;
                 break;
             }
             case 'c': {
@@ -332,8 +339,9 @@ int main(int argc, char* argv[]) {
                     request->opt = opt;
                     CHECK_EQ_EXIT(request->arg = strndup(tok, strlen(tok)), NULL, "strndup")
                     CHECK_EQ_EXIT(push(requests, (void *) request), 1, "push request")
-                    
+
                 } while ((tok = strtok_r(NULL, ",", &tmpstr)) != NULL);
+                request = NULL;
                 break;
             }
             case 'p': {
@@ -350,11 +358,11 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-    if(!optf_requested) {
+    if (!optf_requested) {
         printf("< Option -f not included. Cannot send requests without connecting to the server\n");
         exit(EXIT_FAILURE);
     }
-    if(!username) {
+    if (!username) {
         printf("< Option -a not included. Cannot send requests without authenticate\n");
         exit(EXIT_FAILURE);
     }
@@ -546,8 +554,12 @@ void destroyrequest(cmdrequest *req){
 
 void cleanup(){
     if (already_connected) closeConnection(sktname);
-    if (sktname) free(sktname);
-    if (request) destroyrequest(request);
-    if (wfiles) delete_queue(wfiles, free);
     if (requests) delete_queue(requests, (void (*)(void *)) destroyrequest);
+    requests = NULL;
+    if (sktname) free(sktname);
+    sktname = NULL;
+    if (request) destroyrequest(request);
+    request = NULL;
+    if (wfiles) delete_queue(wfiles, free);
+    wfiles = NULL;
 }
