@@ -1,8 +1,8 @@
 # File Storage Server
-Final project for Operative System course @Unipisa
+Final project for Operative System course [@Unipisa](https://github.com/Unipisa)
 
 ## Overview
-The project is an implementation of a Client-Server application, a *File Storage Server*, in which the files are stored in main memory. The storage has fixed capacity, defined in the configuration file, passed at the time of server startup. Each client, through a request-response protocol, can send multiple requests to the server, to obtain or change the storage status. Storage implements a file ejection mechanism when the limits of the number of files and amount of bytes that can be stored are exceeded.
+The project is an implementation of a Client-Server application, a *File Storage Server*, in which the files are stored in main memory. The storage has fixed capacity, defined in the configuration file, passed during server startup. Each client, through a request-response protocol, can send multiple requests to the server, to obtain or change the storage status. The storage implements a file ejection mechanism when the limits of the number of files and amount of bytes that can be stored are exceeded.
 
 More details (in italian) in [Report.pdf](https://github.com/fram112/file-storage-server/blob/04c12257844d7c4e82ed775527b82ebc2e764197/Report.pdf)
 
